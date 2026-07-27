@@ -49,9 +49,101 @@
   padding: 0.625rem 0.75rem;
   color: var(--color-neutral-800);
   outline: none;
+  background: var(--color-white);
 }
-
 .form-input:focus {
   border-color: var(--color-brand-primary);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-brand-primary) 20%, transparent);
+}
+
+.dark .form-input,
+.dark input:not([type="submit"]):not([type="button"]):not([type="reset"]),
+.dark select,
+.dark textarea {
+  background: var(--color-neutral-100);
+  color: var(--color-neutral-800);
+  border-color: var(--color-neutral-300);
+}
+
+.dark {
+  color-scheme: dark;
+
+  --color-neutral-50:  #0d0d1a;
+  --color-neutral-100: #16162a;
+  --color-neutral-200: #1e1e36;
+  --color-neutral-300: #2a2a42;
+  --color-neutral-400: #5c5c78;
+  --color-neutral-500: #80809c;
+  --color-neutral-600: #a0a0bc;
+  --color-neutral-700: #c0c0d8;
+  --color-neutral-800: #d8d8ec;
+  --color-neutral-900: #eeeef8;
+
+  --color-white: #16162a;
+
+  --color-gray-50:  #1a1a2e;
+  --color-gray-100: #222240;
+  --color-gray-200: #2a2a4a;
+  --color-gray-300: #3a3a5a;
+  --color-gray-400: #5c5c78;
+  --color-gray-500: #80809c;
+  --color-gray-600: #a0a0bc;
+  --color-gray-700: #c0c0d8;
+  --color-gray-800: #d8d8ec;
+  --color-gray-900: #eeeef8;
+
+  --color-green-50:  #052e16;
+  --color-green-100: #064e1a;
+  --color-green-600: #22c55e;
+
+  --color-blue-50:  #0c1f3e;
+  --color-blue-100: #1e3a5f;
+  --color-blue-500: #60a5fa;
+  --color-blue-600: #3b82f6;
+  --color-blue-700: #2563eb;
+
+  --color-red-50:  #450a0a;
+  --color-red-100: #7f1d1d;
+  --color-red-600: #ef4444;
+  --color-red-700: #dc2626;
+
+  --color-amber-50:  #422006;
+  --color-amber-100: #713f12;
+  --color-amber-500: #f59e0b;
+  --color-amber-700: #f59e0b;
+  --color-amber-800: #d97706;
+
+  --color-emerald-50:  #052e16;
+  --color-emerald-100: #064e1a;
+  --color-emerald-200: #166534;
+  --color-emerald-500: #22c55e;
+  --color-emerald-600: #16a34a;
+  --color-emerald-700: #22c55e;
+  --color-emerald-950: #a7f3d0;
+
+  --color-sky-50:  #0c1f3e;
+  --color-sky-100: #1e3a5f;
+  --color-sky-500: #38bdf8;
+  --color-sky-600: #38bdf8;
+  --color-sky-700: #38bdf8;
+  --color-sky-800: #7dd3fc;
+
+  --color-status-success-bg: #052e16;
+  --color-status-warning-bg: #422006;
+  --color-status-error-bg:   #450a0a;
+  --color-status-info-bg:    #0c1f3e;
+  --color-accent-pink:       #2a1628;
+  --color-accent-lilac-bg:   #1e1630;
+
+  --color-brand-primary-dark: #f59e0b;
+  --color-status-error-dark:  #ef4444;
+}
+
+.dark ::-webkit-scrollbar {
+  background: var(--color-neutral-100);
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: var(--color-neutral-300);
+  border-radius: 8px;
 }

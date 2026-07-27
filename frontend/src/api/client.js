@@ -1,23 +1,17 @@
 const API_BASE = '/api';
 
 function dispatchToast(type, message) {
-  window.dispatchEvent(new CustomEvent('mes-toast', {
-    detail: { type, message },
-  }));
+  window.dispatchEvent(new CustomEvent('mes-toast', { detail: { type, message } }));
 }
 
 async function request(endpoint, options = {}) {
   const url = `${API_BASE}${endpoint}`;
   const token = localStorage.getItem('jwt_token');
   const headers = { ...options.headers };
-
   if (token) headers.Authorization = `Bearer ${token}`;
   if (options.body && !(options.body instanceof FormData)) headers['Content-Type'] = 'application/json';
 
-  const config = {
-    ...options,
-    headers,
-  };
+  const config = { ...options, headers };
   if (config.body && typeof config.body === 'object' && !(config.body instanceof FormData)) {
     config.body = JSON.stringify(config.body);
   }
@@ -51,11 +45,8 @@ async function request(endpoint, options = {}) {
 
     const text = await res.text();
     if (!text) return null;
-    try {
-      return JSON.parse(text);
-    } catch {
-      throw new Error('Der Server hat keine gueltige API-Antwort geliefert. Bitte Backend/Proxy pruefen.');
-    }
+    try { return JSON.parse(text); }
+    catch { throw new Error('Der Server hat keine gueltige API-Antwort geliefert. Bitte Backend/Proxy pruefen.'); }
   } catch (error) {
     if (!error.message) {
       if (!options.silent) dispatchToast('error', 'Netzwerkfehler — bitte Verbindung pruefen.');

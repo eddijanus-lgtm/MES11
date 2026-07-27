@@ -2,6 +2,7 @@ import { useLocation, Link } from "react-router-dom";
 import { useAuth } from "../providers/AuthProvider.jsx";
 import { hasRole, ROLES } from "../utils/roles.js";
 import { useTranslation } from "../i18n/I18nProvider.jsx";
+import { useTheme } from "../providers/ThemeProvider.jsx";
 
 const navItems = [
   { path: "/", label: "nav.dashboard", icon: "📊" },
@@ -20,12 +21,13 @@ export default function Sidebar() {
   const location = useLocation();
   const { logout, user } = useAuth();
   const { t, locale, changeLocale } = useTranslation();
+  const { dark, toggleTheme } = useTheme();
 
   return (
-    <div className="sticky top-0 h-screen w-64 shrink-0 bg-white border-r border-neutral-200 flex flex-col">
+    <div className="sticky top-0 h-screen w-64 shrink-0 bg-neutral-100 border-r border-neutral-200 flex flex-col">
       <div className="p-5 border-b border-neutral-100 flex items-center gap-3">
         <div>
-          <h1 className="text-lg font-bold tracking-wide text-neutral-black"><span className="text-brand-primary">MES </span>Shopfloor</h1>
+          <h1 className="text-lg font-bold tracking-wide text-neutral-800"><span className="text-brand-primary">MES </span>Shopfloor</h1>
           <p className="text-xs text-neutral-400 mt-1">OT/IT Gateway</p>
         </div>
         <img src="/logo.jpg" alt="MES Logo" className="flex-shrink-0 w-28 object-contain" />
@@ -51,14 +53,21 @@ export default function Sidebar() {
         })}
       </nav>
 
-      <div className="p-3 border-t border-neutral-100">
-        {/* Language switcher */}
-        <div className="flex gap-1 mb-2 p-1 bg-gray-50 rounded justify-center">
-          {["de", "en"].map(l => (
-            <button key={l} onClick={() => changeLocale(l)} className={`px-2 py-1 text-xs font-medium rounded ${l === locale ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-100'}`}>{l.toUpperCase()}</button>
-          ))}
+      <div className="p-3 border-t border-neutral-100 space-y-2">
+        {/* Language + Theme toggles */}
+        <div className="flex items-center gap-2">
+          <div className="flex flex-1 rounded-md overflow-hidden border border-neutral-200">
+            {["de", "en"].map(l => (
+              <button key={l} onClick={() => changeLocale(l)} className={`flex-1 py-1 text-xs font-medium transition ${
+                l === locale ? 'bg-brand-primary text-white' : 'bg-neutral-100 text-neutral-500 hover:bg-neutral-200'
+              }`}>{l.toUpperCase()}</button>
+            ))}
+          </div>
+          <button onClick={toggleTheme} className="px-2 py-1 rounded-md border border-neutral-200 bg-neutral-100 text-neutral-500 hover:bg-neutral-200 transition text-sm leading-none" title={dark ? "Light mode" : "Dark mode"}>
+            {dark ? '☀️' : '🌙'}
+          </button>
         </div>
-        <div className="mb-3 rounded-md bg-neutral-50 px-3 py-2">
+        <div className="rounded-md bg-neutral-50 px-3 py-2">
           <p className="truncate text-xs font-semibold text-neutral-700">{user?.username}</p>
           <p className="text-[11px] uppercase tracking-wide text-neutral-400">{user?.role}</p>
         </div>

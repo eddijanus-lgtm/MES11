@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -24,6 +24,7 @@ export class AuthService {
   }
 
   async login(user: any) {
+    await this.userRepository.update(user.id, { last_logon: new Date() });
     const payload = { sub: user.id, username: user.username, role: user.role };
     return {
       access_token: await this.jwtService.signAsync(payload),
@@ -44,6 +45,28 @@ export class AuthService {
     });
     await this.userRepository.save(user);
     return { message: 'User created successfully' };
+  }
+
+  async findAll(): Promise<any[]> {
+    const users = await this.userRepository.find({ order: { created_at: 'DESC' } });
+    return users.map(({ password, ...user }) => user);
+  }
+
+  async updateUser(id: string, data: { username?: string; password?: string; role?: string }): Promise<any> {
+    const user = await this.userRepository.findOne({ where: { id } });
+    if (!user) throw new NotFoundException('User not found');
+    if (data.username !== undefined) user.username = data.username;
+    if (data.password) user.password = await bcrypt.hash(data.password, 10);
+    if (data.role !== undefined) user.role = data.role as any;
+    await this.userRepository.save(user);
+    const { password, ...result } = user;
+    return result;
+  }
+
+  async deleteUser(id: string): Promise<void> {
+    const user = await this.userRepository.findOne({ where: { id } });
+    if (!user) throw new NotFoundException('User not found');
+    await this.userRepository.remove(user);
   }
 
 }

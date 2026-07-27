@@ -1,68 +1,39 @@
 import { useState, useEffect } from 'react';
+import { useTranslation } from "../i18n/I18nProvider.jsx";
 
 export default function SystemStatus() {
+  const { t } = useTranslation();
   const [backendOnline, setBackendOnline] = useState('checking');
   const [dbOnline, setDbOnline] = useState('checking');
   const [token, setToken] = useState(false);
 
   useEffect(() => {
     setToken(Boolean(localStorage.getItem('jwt_token')));
-    fetch('/api/health')
-      .then(res => res.json())
-      .then(health => {
+    const check = () => {
+      fetch('/api/health').then(res => res.json()).then(health => {
         setBackendOnline(health.status === 'ok' ? 'online' : 'error');
         setDbOnline(health.info?.database?.status === 'up' ? 'online' : 'error');
-      })
-      .catch(() => {
-        setBackendOnline('offline');
-        setDbOnline('unknown');
-      });
-
-    const interval = setInterval(() => {
-      fetch('/api/health')
-        .then(res => res.json())
-        .then(health => {
-          setBackendOnline(health.status === 'ok' ? 'online' : 'error');
-          setDbOnline(health.info?.database?.status === 'up' ? 'online' : 'error');
-        })
-        .catch(() => {
-          setBackendOnline('offline');
-          setDbOnline('unknown');
-        });
-    }, 5000);
-
+      }).catch(() => { setBackendOnline('offline'); setDbOnline('unknown'); });
+    };
+    check();
+    const interval = setInterval(check, 5000);
     return () => clearInterval(interval);
   }, []);
 
-  const status = backendOnline === 'online' ? '🟢 Online' :
-                  backendOnline === 'error' ? '🟠 Error' : '⚫ Offline';
+  const statusIcon = backendOnline === 'online' ? '✅' : backendOnline === 'error' ? '❌' : '⚠️';
+  const dbIcon = dbOnline === 'online' ? '✅' : dbOnline === 'error' ? '❌' : '❓';
+  const tokenIcon = token ? '✅' : '🔒';
 
-  const dbStatus = dbOnline === 'online' ? '🟢 Connected' :
-                   dbOnline === 'error' ? '🟠 Error' : '⚫ Unknown';
-  const tokenStatus = token ? '🟢 Authenticated' : '⚪ Not logged in';
+  const statusLabel = backendOnline === 'online' ? t("system.online") : backendOnline === 'error' ? t("system.error") : t("system.offline");
+  const dbLabel = dbOnline === 'online' ? t("system.connected") : dbOnline === 'error' ? t("system.error") : t("system.unknown");
+  const tokenLabel = token ? t("system.authenticated") : t("system.notLoggedIn");
 
   return (
-    <div style={{
-      position: 'fixed',
-      bottom: 16,
-      right: 16,
-      backgroundColor: '#ffffff',
-      color: '#171717',
-      padding: '10px 14px',
-      borderRadius: 8,
-      fontSize: 12,
-      fontFamily: 'monospace',
-      boxShadow: '0 10px 30px rgba(15, 23, 42, 0.12)',
-      border: '1px solid #e5e5e5',
-      zIndex: 9999,
-      minWidth: 200,
-    }}>
-      <div style={{ fontWeight: 'bold', marginBottom: 4, borderBottom: '1px solid #e5e5e5', paddingBottom: 4 }}>
-        System Status
-      </div>
-      <div>Backend: {status}</div>
-      <div>Database: {dbStatus}</div>
-      <div>Session: {tokenStatus}</div>
+    <div className="fixed bottom-4 right-4 z-[9999] min-w-[200px] rounded-lg border border-neutral-200 bg-white p-2.5 font-mono text-xs text-neutral-800 shadow-[0_10px_30px_rgba(15,23,42,0.12)]">
+      <div className="mb-1 border-b border-neutral-200 pb-1 font-bold">{t("system.title")}</div>
+      <div>{t("system.backend")}: {statusIcon} {statusLabel}</div>
+      <div>{t("system.database")}: {dbIcon} {dbLabel}</div>
+      <div>{t("system.session")}: {tokenIcon} {tokenLabel}</div>
     </div>
   );
 }
