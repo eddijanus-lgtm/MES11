@@ -92,8 +92,10 @@ jobs:
         run: |
           test -f dist/main.js
           test -f frontend/dist/index.html
+          test -f tools/opcua-test-server.js
           tar -czf "mes-${GITHUB_SHA}.tar.gz" dist frontend/dist package.json package-lock.json \
-            tools/create-admin.js tools/phase3-apply.js docker-compose.yml deploy/mosquitto.conf
+            tools/create-admin.js tools/opcua-test-server.js tools/phase3-apply.js \
+            tools/seed-demo-alarms.js tools/seed-stmes-demo.js docker-compose.yml deploy/mosquitto.conf
       - name: Entpacktes Release gegen PostgreSQL prüfen
         env:
           NODE_ENV: production
