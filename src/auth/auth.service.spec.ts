@@ -17,6 +17,7 @@ describe('AuthService', () => {
     findOne: jest.fn(),
     create: jest.fn((value) => value),
     save: jest.fn(),
+    update: jest.fn(),
   };
   const jwtService = {
     signAsync: jest.fn(),

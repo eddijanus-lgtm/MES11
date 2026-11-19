@@ -1,10 +1,11 @@
-name: MES CI
+name: MES CI/CD
 
 on:
   pull_request:
     branches: [main]
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -25,7 +26,6 @@ jobs:
       - run: npm run test:e2e -- --ci --runInBand
       - run: npm run build
       - uses: actions/upload-artifact@v4
-        if: github.event_name == 'push'
         with:
           name: backend
           path: dist/
@@ -49,7 +49,6 @@ jobs:
       - run: npm ci
       - run: npm run build
       - uses: actions/upload-artifact@v4
-        if: github.event_name == 'push'
         with:
           name: frontend
           path: frontend/dist/
@@ -57,13 +56,30 @@ jobs:
           retention-days: 1
 
   release:
-    name: Release-Paket
-    if: github.event_name == 'push'
+    name: Release- und Startprüfung
     needs: [backend, frontend]
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: mes_ci
+          POSTGRES_PASSWORD: mes_ci_password
+          POSTGRES_DB: mes_ci
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U mes_ci -d mes_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24.x'
+          cache: npm
       - uses: actions/download-artifact@v5
         with:
           name: backend
@@ -78,7 +94,26 @@ jobs:
           test -f frontend/dist/index.html
           tar -czf "mes-${GITHUB_SHA}.tar.gz" dist frontend/dist package.json package-lock.json \
             tools/create-admin.js tools/phase3-apply.js docker-compose.yml deploy/mosquitto.conf
+      - name: Entpacktes Release gegen PostgreSQL prüfen
+        env:
+          NODE_ENV: production
+          PORT: '3000'
+          DB_HOST: 127.0.0.1
+          DB_PORT: ${{ job.services.postgres.ports[5432] }}
+          DB_USERNAME: mes_ci
+          DB_PASSWORD: mes_ci_password
+          DB_DATABASE: mes_ci
+          JWT_SECRET: mes-ci-only-placeholder-not-for-deployment
+          ADMIN_USERNAME: ci-admin
+          ADMIN_PASSWORD: ci-smoke-password
+          MQTT_BROKER_URL: mqtt://127.0.0.1:1
+          OPC_UA_SERVER_ADDRESS: opc.tcp://127.0.0.1:1/UA/WaraMesTest
+        run: |
+          release_dir=$(mktemp -d)
+          tar -xzf "mes-${GITHUB_SHA}.tar.gz" -C "$release_dir"
+          bash deploy/smoke-test-release.sh "$release_dir"
       - uses: actions/upload-artifact@v4
+        if: github.ref == 'refs/heads/main'
         with:
           name: mes-${{ github.sha }}
           path: mes-${{ github.sha }}.tar.gz

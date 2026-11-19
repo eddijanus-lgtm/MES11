@@ -15,8 +15,16 @@ describe('OrdersService', () => {
     findOne: jest.fn(),
     delete: jest.fn(),
   };
-  const carriersRepo = { count: jest.fn() };
-  const routeStepsRepo = { delete: jest.fn() };
+  const carriersRepo = {
+    count: jest.fn(),
+    find: jest.fn().mockResolvedValue([]),
+    save: jest.fn(async (value) => value),
+  };
+  const routeStepsRepo = {
+    create: jest.fn((value) => value),
+    save: jest.fn(async (value) => value),
+    delete: jest.fn(),
+  };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -35,6 +43,7 @@ describe('OrdersService', () => {
 
   it('creates an order', async () => {
     const dto: any = { name: 'Order 1', priority: 2, machine_id: 'm1', operation: 'assemble', quantity: 5 };
+    carriersRepo.find.mockResolvedValueOnce(Array.from({ length: dto.quantity }, (_, i) => ({ id: `carrier-${i}` })));
 
     await expect(service.create(dto)).resolves.toMatchObject(dto);
     expect(ordersRepo.create).toHaveBeenCalledWith(expect.objectContaining(dto));

@@ -8,9 +8,9 @@ GitHub Actions prüft Pull Requests gegen `main` und baut aus jedem erfolgreiche
 | --- | --- |
 | Backend-Tests und Build | `npm ci`, Jest-Unit- und Integrationssuiten, Jest-HTTP-E2E-Suiten und NestJS-Build |
 | Frontend-Build | `npm ci` und Vite-Produktionsbuild in `frontend/` |
-| Release-Paket | Auf `main` nach beiden erfolgreichen Jobs. Prüft die Einstiegspunkte und bündelt Backend, Frontend, npm-Manifeste sowie die Skripte für Admin-Konto und Phase 3. |
+| Release- und Startprüfung | Entpackt das gebaute Archiv, installiert nur Produktionsabhängigkeiten, initialisiert eine kurzlebige PostgreSQL-16-Datenbank und startet das Release mit deaktivierter Schema-Synchronisierung erneut. Prüft Datenbank-Health, Frontend inklusive JavaScript-Datei, Admin-Login und authentifizierten API-Zugriff. Nur auf `main` wird das geprüfte Paket veröffentlicht. |
 
-Backend und Frontend laufen parallel auf Linux. Die Pipeline verwendet Node.js 24 als Zielversion. Die vorhandenen HTTP-E2E-Suiten verwenden Test-Doubles. Die echte Datenbankverbindung, der Browser-Login und gegebenenfalls MQTT, OPC UA und WebSockets werden auf dem Schulserver geprüft. Beide CI-Jobs sollen in GitHub als Pflichtprüfungen für `main` eingerichtet werden. [GitHub-Dokumentation zur Node.js-CI](https://docs.github.com/en/actions/tutorials/build-and-test-code/nodejs)
+Backend und Frontend laufen parallel auf Linux mit Node.js 24. Die Startprüfung nutzt ausschließlich CI-Testwerte. Auf dem Schulserver werden zusätzlich die Bestandsdatenbank, der Browser-Login über HTTPS und die eingerichteten MQTT-, OPC-UA- und WebSocket-Verbindungen geprüft. Als Pflichtprüfung für Pull Requests gegen `main` eignet sich `Release- und Startprüfung`, da sie beide Build-Jobs voraussetzt. [GitHub-Dokumentation zu Pflichtprüfungen](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches)
 
 ## Erster Rollout
 
