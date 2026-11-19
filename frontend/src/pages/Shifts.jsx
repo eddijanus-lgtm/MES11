@@ -10,6 +10,7 @@ export default function ShiftsPage() {
   const [reports, setReports] = useState([]);
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [form, setForm] = useState({ name: "", type: "day", start_time: "06:00", end_time: "14:00", date: new Date().toISOString().split("T")[0], manager_name: "" });
 
   useEffect(() => { loadShifts(); }, []);
@@ -21,20 +22,20 @@ export default function ShiftsPage() {
     setLoading(false);
   }, [activeTab]);
 
-  async function loadShifts() { try { const s = await api.get("/shifts"); setShifts(Array.isArray(s) ? s : []); } catch {} }
-  async function loadReports() { try { const r = await api.get("/shifts/reports"); setReports(Array.isArray(r) ? r : []); } catch {} }
-  async function loadSummary(date) { try { const s = await api.get(`/shifts/summary/${date}`); if (s) setSummary(s); } catch {} }
+  async function loadShifts() { try { const s = await api.get("/shifts"); setShifts(Array.isArray(s) ? s : []); } catch (requestError) { setError(requestError.message); } }
+  async function loadReports() { try { const r = await api.get("/shifts/reports"); setReports(Array.isArray(r) ? r : []); } catch (requestError) { setError(requestError.message); } }
+  async function loadSummary(date) { try { const s = await api.get(`/shifts/summary/${date}`); if (s) setSummary(s); } catch (requestError) { setError(requestError.message); } }
 
   async function createShift(e) {
     e.preventDefault();
-    try { const s = await api.post("/shifts", form); loadShifts(); setForm({ ...form, id: s.id }); } catch {}
+    try { const s = await api.post("/shifts", form); await loadShifts(); setForm({ ...form, id: s.id }); } catch (requestError) { setError(requestError.message); }
   }
 
-  async function closeShift(id) { try { await api.post(`/shifts/${id}/close`); loadShifts(); } catch {} }
+  async function closeShift(id) { try { await api.post(`/shifts/${id}/close`); await loadShifts(); } catch (requestError) { setError(requestError.message); } }
 
-  async function generateReport(shiftId, date) { try { const r = await api.post(`/shifts/reports/generate/${shiftId}?date=${date}`); setReports(prev => [r, ...prev]); } catch {} }
+  async function generateReport(shiftId, date) { try { const r = await api.post(`/shifts/reports/generate/${shiftId}?date=${date}`); setReports(prev => [r, ...prev]); setActiveTab("reports"); } catch (requestError) { setError(requestError.message); } }
 
-  async function finalizeReport(id) { try { await api.post(`/shifts/reports/${id}/finalize`); loadReports(); } catch {} }
+  async function finalizeReport(id) { try { await api.post(`/shifts/reports/${id}/finalize`); await loadReports(); } catch (requestError) { setError(requestError.message); } }
 
   const shiftTypeLabels = { day: t("shifts.day"), night: t("shifts.night"), swing: t("shifts.swing") };
 
@@ -48,13 +49,15 @@ export default function ShiftsPage() {
         ))}
       </div>
 
+      {error && <p role="alert" className="mb-4 rounded-lg bg-status-error-bg px-4 py-3 text-sm text-status-error">{error}</p>}
+
       {loading && <p className="text-gray-400">{t("common.loading")}</p>}
 
       {activeTab === "shifts" && !loading && (
         <div>
           <form onSubmit={createShift} className="mb-6 p-4 bg-white shadow-sm border rounded-lg space-y-3">
             <h3 className="font-medium mb-2">{t("shifts.newShift")}</h3>
-            <input type="text" placeholder={t("shifts.shiftName")} value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className="border px-2 py-1 rounded w-full" />
+            <input type="text" required placeholder={t("shifts.shiftName")} value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className="border px-2 py-1 rounded w-full" />
             <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })} className="border px-2 py-1 rounded w-full">{["day", "night", "swing"].map(t => <option key={t} value={t}>{shiftTypeLabels[t]}</option>)}</select>
             <input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} className="border px-2 py-1 rounded w-full" />
             <input type="text" placeholder={t("shifts.startTimePlaceholder")} value={form.start_time} onChange={e => setForm({ ...form, start_time: e.target.value })} className="border px-2 py-1 rounded w-full" />
@@ -71,7 +74,7 @@ export default function ShiftsPage() {
                   <td className="px-4 py-2 font-medium">{s.name}</td>
                   <td className="px-4 py-2"><span className="capitalize text-xs px-2 py-1 rounded bg-gray-100">{shiftTypeLabels[s.type] || s.type}</span></td>
                   <td className="px-4 py-2 text-xs">{s.start_time} - {s.end_time}</td>
-                  <td className="px-4 py-2">{!s.closed && <button onClick={() => closeShift(s.id)} className="text-sm px-2 py-1 bg-green-50 rounded hover:bg-green-100 text-green-600">{t("shifts.closeShift")}</button>}</td>
+                  <td className="px-4 py-2 flex gap-2">{!s.closed && <button onClick={() => closeShift(s.id)} className="text-sm px-2 py-1 bg-green-50 rounded hover:bg-green-100 text-green-600">{t("shifts.closeShift")}</button>}<button onClick={() => generateReport(s.id, s.date)} className="text-sm px-2 py-1 bg-blue-50 rounded hover:bg-blue-100 text-blue-700">{t("shifts.generateReport")}</button></td>
                 </tr>
               ))}</tbody>
             </table>

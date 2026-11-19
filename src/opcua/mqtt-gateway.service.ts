@@ -23,6 +23,10 @@ export class MqttGatewayService implements OnModuleInit, OnModuleDestroy {
 
   constructor(private readonly configService: ConfigService) {}
 
+  get webshopOrderTopic(): string {
+    return this.configService.get('WEBSHOP_MQTT_TOPIC', 'i4.0/production/orders');
+  }
+
   async onModuleInit() {
     const brokerUrl = this.configService.get('MQTT_BROKER_URL', 'mqtt://localhost:1883');
     try {
@@ -41,7 +45,11 @@ export class MqttGatewayService implements OnModuleInit, OnModuleDestroy {
       this.client.on('connect', () => {
         this.reconnectAttempts = 0;
         this.logger.log('Connected to MQTT broker at ' + brokerUrl);
-        for (const topic of SUBSCRIPTION_TOPICS) {
+        const topics = new Set([
+          ...SUBSCRIPTION_TOPICS,
+          this.webshopOrderTopic,
+        ]);
+        for (const topic of topics) {
           this.client.subscribe(topic, (error: Error | null) => {
             if (error) this.logger.error(`MQTT subscription failed for ${topic}: ${error.message}`);
           });
@@ -102,6 +110,14 @@ export class MqttGatewayService implements OnModuleInit, OnModuleDestroy {
     if (!allowedPrefixes.some((prefix) => topic.startsWith(prefix))) {
       throw new ForbiddenException('MQTT topic is not allowed');
     }
+    await this.publishJson(topic, data);
+  }
+
+  publishWebshopOrder(data: Record<string, unknown>): Promise<void> {
+    return this.publishJson(this.webshopOrderTopic, data);
+  }
+
+  private publishJson(topic: string, data: unknown): Promise<void> {
     if (!this.client?.connected) throw new ServiceUnavailableException('MQTT broker is not connected');
     return new Promise<void>((resolve, reject) => {
       this.client.publish(topic, JSON.stringify(data), { qos: 1 }, (error: Error | null) => error ? reject(error) : resolve());

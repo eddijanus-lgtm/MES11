@@ -1,3 +1,4 @@
+require('dotenv').config({ quiet: true });
 const { DataType, OPCUAServer, StatusCodes, Variant } = require('node-opcua');
 
 const port = Number(process.env.OPC_UA_TEST_SERVER_PORT || 4840);
@@ -37,41 +38,55 @@ const stationConfigs = [
 ];
 const stations = stationConfigs.map(createStationState);
 
-const mesApiUrl = process.env.MES_API_URL || 'http://localhost:3000/api';
-const mesApiUser = process.env.MES_API_USER || 'admin';
-const mesApiPass = process.env.MES_API_PASS || 'admin123!';
+const mesApiUrl = process.env.MES_API_URL || process.env.MES_BASE_URL || 'http://localhost:3000/api';
+const mesApiUser = process.env.MES_API_USER || process.env.DEMO_ADMIN_USERNAME || process.env.ADMIN_USERNAME;
+const mesApiPass = process.env.MES_API_PASS || process.env.DEMO_ADMIN_PASSWORD || process.env.ADMIN_PASSWORD;
+const configuredCarriers = process.env.DEMO_CARRIER_IDS?.split(',').map((id) => Number(id.trim()));
 const transferMs = 2000;
 const releaseEveryMs = 30000;
+const handshakeResetMs = 600;
+const carriersInLine = new Set();
+const completedFixedCarriers = new Set();
 
 async function fetchCarriersFromMes() {
+  if (configuredCarriers) {
+    return [...new Set(configuredCarriers)]
+      .filter((id) => !completedFixedCarriers.has(id))
+      .map((carrierId) => ({ carrierId, resourceId: 1 }));
+  }
   try {
     const loginRes = await fetch(`${mesApiUrl}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: mesApiUser, password: mesApiPass }),
+      signal: AbortSignal.timeout(5000),
     });
     if (!loginRes.ok) throw new Error(`Login failed: ${loginRes.status}`);
     const { access_token } = await loginRes.json();
-    const carriersRes = await fetch(`${mesApiUrl}/carriers`, {
-      headers: { Authorization: `Bearer ${access_token}` },
-    });
-    if (!carriersRes.ok) throw new Error(`Fetch carriers failed: ${carriersRes.status}`);
-    const carriers = await carriersRes.json();
-    return carriers
-      .filter((c) => c.order_id && (c.status === 'assigned' || c.status === 'in_process'))
-      .map((c, i) => ({
-        carrierId: c.carrier_number,
-        partNo: 'WEBSHOP-PRODUCT-DEMO',
-        releaseDelay: (i + 1) * 2000,
+    const get = async (path) => {
+      const response = await fetch(mesApiUrl + path, {
+        headers: { Authorization: `Bearer ${access_token}` },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!response.ok) throw new Error(`GET ${path}: ${response.status}`);
+      return response.json();
+    };
+    const carriers = await get('/carriers');
+    const routes = new Map();
+    return await Promise.all(carriers
+      .filter((c) => c.order_id && (c.status === 'assigned' || c.status === 'in_process') && !carriersInLine.has(c.carrier_number))
+      .map(async (c) => {
+        let resourceId = c.current_resource_id ?? 1;
+        if (c.current_resource_id == null && c.current_step_no > 1) {
+          if (!routes.has(c.order_id)) routes.set(c.order_id, get(`/orders/${c.order_id}/route`));
+          const route = await routes.get(c.order_id);
+          resourceId = route.find((step) => step.step_no === c.current_step_no)?.resource_id;
+        }
+        return { carrierId: c.carrier_number, resourceId };
       }));
   } catch (err) {
-    console.warn(`MES API nicht erreichbar (${err.message}), fallback auf DEMO_CARRIER_IDS`);
-    const ids = (process.env.DEMO_CARRIER_IDS || '128,129').split(',').map(Number);
-    return ids.map((id, i) => ({
-      carrierId: id,
-      partNo: 'WEBSHOP-PRODUCT-DEMO',
-      releaseDelay: (i + 1) * 2000,
-    }));
+    console.warn(`Carrier konnten nicht vom MES geladen werden: ${err.message}`);
+    return null;
   }
 }
 
@@ -109,6 +124,7 @@ function createStationState(config) {
     responseSeen: false,
     xStartBlockedUntil: 0,
     requestTimeout: null,
+    cycleTimer: null,
     rejectCounts: {},
   };
 }
@@ -187,7 +203,7 @@ function addStation(namespace, station) {
 
 function processNextInQueue(station) {
   if (station.waitingQueue.length === 0) return;
-  if (station.query.xStart || station.state.xBusy) return;
+  if (!station.state.xAuto || station.query.xStart || station.state.xBusy) return;
   const now = Date.now();
   if (station.xStartBlockedUntil > now) {
     setTimeout(() => processNextInQueue(station), Math.min(100, station.xStartBlockedUntil - now)).unref();
@@ -199,7 +215,7 @@ function processNextInQueue(station) {
 }
 
 function requestMesData(station, carrier) {
-  if (station.query.xStart || station.state.xBusy) {
+  if (!station.state.xAuto || station.query.xStart || station.state.xBusy) {
     station.waitingQueue.push(carrier);
     console.log(`${station.name}: carrier ${carrier.carrierId} in die Queue (Position ${station.waitingQueue.length})`);
     return;
@@ -238,8 +254,10 @@ function requestMesData(station, carrier) {
         station.state.xErrL0 = true;
       }
       station.query.xStart = false;
+      station.xStartBlockedUntil = Date.now() + handshakeResetMs;
       station.state.xBusy = false;
       station.currentCarrier = null;
+      carriersInLine.delete(carrierId);
       station.requestTimeout = null;
       setTimeout(() => processNextInQueue(station), 100).unref();
     }
@@ -249,6 +267,7 @@ function requestMesData(station, carrier) {
 }
 
 function completeStationCycle(station) {
+  station.cycleTimer = null;
   const carrier = station.currentCarrier;
   if (!carrier) return;
 
@@ -280,13 +299,16 @@ function completeStationCycle(station) {
   station.state.xBusy = false;
   station.currentCarrier = null;
   station.pendingCompletion = false;
-  station.xStartBlockedUntil = Date.now() + 600;
+  station.xStartBlockedUntil = Date.now() + handshakeResetMs;
 
-  if (!failed && station.query.uiNextResourceId) {
-    const nextStation = stations.find((candidate) => candidate.resourceId === station.query.uiNextResourceId);
-    if (nextStation) {
-      console.log(`${station.name}: carrier ${carrier.carrierId} wird zu ${nextStation.name} transportiert (${transferMs} ms)`);
-      setTimeout(() => requestMesData(nextStation, carrier), transferMs).unref();
+  const nextStation = !failed && stations.find((candidate) => candidate.resourceId === station.query.uiNextResourceId);
+  if (nextStation) {
+    console.log(`${station.name}: carrier ${carrier.carrierId} wird zu ${nextStation.name} transportiert (${transferMs} ms)`);
+    setTimeout(() => requestMesData(nextStation, carrier), transferMs).unref();
+  } else {
+    carriersInLine.delete(carrier.carrierId);
+    if (configuredCarriers && !failed && station.query.uiNextResourceId === 0) {
+      completedFixedCarriers.add(carrier.carrierId);
     }
   }
 
@@ -297,10 +319,12 @@ function simulatePlc(station) {
   
   setInterval(() => {
     if (station.control.xCmdReset) {
-      const stuckCarrier = station.currentCarrier || {
-        carrierId: station.processData ? station.processData.iCarrierID : 0,
-        partNo: 'WEBSHOP-PRODUCT-DEMO',
-      };
+      const stuckCarrier = station.currentCarrier;
+      clearTimeout(station.requestTimeout);
+      clearTimeout(station.cycleTimer);
+      station.requestTimeout = null;
+      station.cycleTimer = null;
+      station.pendingCompletion = false;
       station.query.xStart = false;
       station.query.xQryBusy = false;
       station.query.xDone = false;
@@ -310,17 +334,14 @@ function simulatePlc(station) {
       station.state.xErrL0 = false;
       station.state.xAuto = true;
       station.currentCarrier = null;
-      station.waitingQueue = [];
       station.responseSeen = false;
       station.control.xCmdReset = false;
-      delete station.rejectCounts[stuckCarrier.carrierId];
-      if (station.resourceId === 3) {
-        console.log(`${station.name}: Reset – Carrier ${stuckCarrier.carrierId} bleibt an Q01, wird fortgesetzt`);
-        setTimeout(() => requestMesData(station, stuckCarrier), transferMs).unref();
-      } else {
-        console.log(`${station.name}: Reset – Carrier ${stuckCarrier.carrierId} wird zu S01 transportiert`);
-        setTimeout(() => releaseCarrier(stuckCarrier), transferMs).unref();
+      station.rejectCounts = {};
+      station.xStartBlockedUntil = Date.now() + handshakeResetMs;
+      if (stuckCarrier) {
+        station.waitingQueue.unshift(stuckCarrier);
       }
+      processNextInQueue(station);
     }
 
     if (station.control.xCmdStop) {
@@ -344,8 +365,9 @@ function simulatePlc(station) {
       console.log(`${station.name}: Start-Befehl vom MES ausgefuehrt`);
       if (station.pendingCompletion && station.currentCarrier) {
         station.pendingCompletion = false;
-        setTimeout(() => completeStationCycle(station), 1000).unref();
+        station.cycleTimer = setTimeout(() => completeStationCycle(station), 1000).unref();
       }
+      processNextInQueue(station);
     }
 
     if (station.query.xStart && (station.query.xDone || station.query.xError) && !station.responseSeen) {
@@ -354,8 +376,9 @@ function simulatePlc(station) {
       console.log(`${station.name}: MES-Antwort result=${station.query.uiResultCode}, order=${station.query.sOrderNo || '-'}`);
       if (station.query.xDone) {
         delete station.rejectCounts[station.query.uiCarrierId];
-        console.log(`${station.name}: ${station.operation} gestartet, cycleTime=${station.cycleTimeMs} ms`);
-        setTimeout(() => completeStationCycle(station), station.cycleTimeMs).unref();
+        const cycleTimeMs = Math.max(1, Math.round(station.cycleTimeMs * (0.9 + Math.random() * 0.2)));
+        console.log(`${station.name}: ${station.operation} gestartet, cycleTime=${cycleTimeMs} ms`);
+        station.cycleTimer = setTimeout(() => completeStationCycle(station), cycleTimeMs).unref();
       } else {
         const carrierId = station.query.uiCarrierId;
         station.rejectCounts[carrierId] = (station.rejectCounts[carrierId] || 0) + 1;
@@ -366,8 +389,10 @@ function simulatePlc(station) {
           station.state.xErrL0 = true;
         }
         station.query.xStart = false;
+        station.xStartBlockedUntil = Date.now() + handshakeResetMs;
         station.state.xBusy = false;
         station.currentCarrier = null;
+        carriersInLine.delete(carrierId);
         setTimeout(() => processNextInQueue(station), 100).unref();
       }
     }
@@ -375,49 +400,44 @@ function simulatePlc(station) {
 }
 
 function releaseCarrier(carrier) {
-  if (deactivatedCarrierIds.has(carrier.carrierId)) return;
-  console.log(`Wareneingang: carrier ${carrier.carrierId} (${carrier.partNo}) in die Linie freigegeben`);
-  requestMesData(stations[0], carrier);
+  const station = stations.find((candidate) => candidate.resourceId === carrier.resourceId);
+  if (!station || carriersInLine.has(carrier.carrierId)) return;
+  carriersInLine.add(carrier.carrierId);
+  requestMesData(station, carrier);
 }
 
 function lidColorName(value) {
   return ({ 1: 'rot', 2: 'gruen', 4: 'blau' })[value] || 'unbekannt';
 }
 
-function scheduleCarrierReleases(carrier) {
-  setTimeout(() => {
-    releaseCarrier(carrier);
-    setInterval(() => releaseCarrier(carrier), releaseEveryMs).unref();
-  }, carrier.releaseDelay).unref();
-}
-
-const knownCarrierIds = new Set();
-const deactivatedCarrierIds = new Set();
-
-function scheduleNewCarrier(carrierPlan) {
-  if (knownCarrierIds.has(carrierPlan.carrierId)) {
-    deactivatedCarrierIds.delete(carrierPlan.carrierId);
-    return;
-  }
-  knownCarrierIds.add(carrierPlan.carrierId);
-  scheduleCarrierReleases(carrierPlan);
-  console.log(`Neuer Carrier ${carrierPlan.carrierId} automatisch aufgenommen`);
-}
-
+const nextCarrierRelease = new Map();
 async function refreshCarriers() {
-  try {
-    const plans = await fetchCarriersFromMes();
-    const activeIds = new Set(plans.map((p) => p.carrierId));
-    for (const id of knownCarrierIds) {
-      if (!activeIds.has(id)) deactivatedCarrierIds.add(id);
-    }
-    for (const plan of plans) scheduleNewCarrier(plan);
-  } catch (err) {
-    // silent – fetchCarriersFromMes already logs warnings
+  const plans = await fetchCarriersFromMes();
+  if (!plans) return;
+  const activeIds = new Set(plans.map(({ carrierId }) => carrierId));
+  for (const id of nextCarrierRelease.keys()) {
+    if (!activeIds.has(id) && !carriersInLine.has(id)) nextCarrierRelease.delete(id);
   }
+  const now = Date.now();
+  for (const plan of plans) {
+    if ((nextCarrierRelease.get(plan.carrierId) ?? 0) > now) continue;
+    releaseCarrier(plan);
+    nextCarrierRelease.set(plan.carrierId, now + releaseEveryMs);
+  }
+}
+
+async function pollCarriers() {
+  await refreshCarriers();
+  setTimeout(() => void pollCarriers(), 15000).unref();
 }
 
 async function start() {
+  if (configuredCarriers?.some((id) => !Number.isInteger(id) || id < 1 || id > 32767)) {
+    throw new Error('DEMO_CARRIER_IDS must contain comma-separated integers from 1 to 32767.');
+  }
+  if (!configuredCarriers && (!mesApiUser || !mesApiPass)) {
+    throw new Error('Set DEMO_CARRIER_IDS or configure DEMO_ADMIN_USERNAME and DEMO_ADMIN_PASSWORD.');
+  }
   await server.initialize();
   const namespace = server.engine.addressSpace.getOwnNamespace();
   stations.forEach((station) => addStation(namespace, station));
@@ -431,9 +451,10 @@ async function start() {
     console.log(`- Resource ${station.resourceId}: ${station.name}, operation=${station.operation}, cycle=${station.cycleTimeMs} ms`);
     simulatePlc(station);
   }
-  await refreshCarriers();
-  console.log(`Carrier automatisch von ${mesApiUrl} geladen, Polling alle 15s`);
-  setInterval(() => void refreshCarriers(), 15000).unref();
+  console.log(configuredCarriers
+    ? `Simulierter Wareneingang: Carrier ${configuredCarriers.join(', ')}`
+    : `Carrier automatisch von ${mesApiUrl} geladen, Polling alle 15s`);
+  await pollCarriers();
 }
 
 async function shutdown() {

@@ -16,8 +16,8 @@ export class DashboardController {
 
   @Get('trends/all')
   @Roles(UserRoleEnum.ADMIN, UserRoleEnum.OPERATOR, UserRoleEnum.VIEWER)
-  getAllTrends(@Query('from') from?: string, @Query('to') to?: string, @Query('interval') interval?: string) {
-    return this.dashboardService.getDashboardTrends(from, to, interval);
+  getAllTrends(@Query('from') from?: string, @Query('to') to?: string, @Query('interval') interval?: string, @Query('machine_id') machineId?: string) {
+    return this.dashboardService.getDashboardTrends(from, to, interval, machineId);
   }
 
   @Get('trends/pareto')

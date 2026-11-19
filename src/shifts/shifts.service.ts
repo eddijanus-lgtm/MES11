@@ -1,8 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between, LessThanOrEqual, MoreThanOrEqual } from 'typeorm';
+import { Repository } from 'typeorm';
 const dayjs = require('dayjs');
 import { ShiftEntity, ShiftReportEntity, ProductionBatchEntity } from './entities';
+import { OrderEntity } from '../orders/order.entity';
+import { MachineEntity, MachineStatusEnum } from '../machines/machine.entity';
+import { DowntimeLogEntity } from '../machines/downtime.entity';
+import { DataPointEntity } from '../data-collection/data-point.entity';
+import { AlarmEntity } from '../alarms/alarm.entity';
 
 @Injectable()
 export class ShiftsService {
@@ -15,6 +20,16 @@ export class ShiftsService {
     private readonly reportRepo: Repository<ShiftReportEntity>,
     @InjectRepository(ProductionBatchEntity)
     private readonly batchRepo: Repository<ProductionBatchEntity>,
+    @InjectRepository(OrderEntity)
+    private readonly ordersRepo: Repository<OrderEntity>,
+    @InjectRepository(MachineEntity)
+    private readonly machinesRepo: Repository<MachineEntity>,
+    @InjectRepository(DowntimeLogEntity)
+    private readonly downtimeRepo: Repository<DowntimeLogEntity>,
+    @InjectRepository(DataPointEntity)
+    private readonly dataPointsRepo: Repository<DataPointEntity>,
+    @InjectRepository(AlarmEntity)
+    private readonly alarmsRepo: Repository<AlarmEntity>,
   ) {}
 
   // --- Shifts ---
@@ -47,41 +62,17 @@ export class ShiftsService {
   async generateReport(shiftId: string, dateForApi?: string): Promise<ShiftReportEntity> {
     const shift = await this.getShift(shiftId);
     const dateStr = dayjs(dateForApi || shift.date).format('YYYY-MM-DD');
-    const startOfDay = dayjs(dateStr).startOf('day').toISOString();
-    const endOfDay = dayjs(dateStr).endOf('day').toISOString();
+    const metrics = await this.getProductionMetrics(dateStr, shift.start_time, shift.end_time);
 
-    // Orders stats (simulated from existing orders module)
-    const totalOrders = Math.floor(Math.random() * 5);
-    const completedOrders = Math.floor(totalOrders * 0.8);
-    const cancelledOrders = totalOrders - completedOrders;
-
-    // OEE calculation placeholder
-    const oeeAvail = 85 + Math.floor(Math.random() * 10);
-    const oeePerf = 75 + Math.floor(Math.random() * 10);
-    const oeeQual = 90 + Math.floor(Math.random() * 5);
-    const oeeTotal = (oeeAvail / 100) * (oeePerf / 100) * (oeeQual / 100) * 100;
-
-    const report = this.reportRepo.create({
+    return this.reportRepo.save(this.reportRepo.create({
       shift_id: shiftId,
       shift_name: shift.name,
-      manager_name: shift.manager_name || 'N/A',
+      manager_name: shift.manager_name,
       shift_start: shift.start_time,
       shift_end: shift.end_time,
       date: dateStr,
-      total_orders: totalOrders,
-      completed_orders: completedOrders,
-      cancelled_orders: cancelledOrders,
-      oee_availability: oeeAvail,
-      oee_performance: oeePerf,
-      oee_quality: oeeQual,
-      oee_total: parseFloat(oeeTotal.toFixed(2)),
-      throughput_units: 150 + Math.floor(Math.random() * 50),
-      active_machines: ['Resource1', 'Resource2', 'Resource3'],
-      offline_machines: [],
-      total_downtime_minutes: 10 + Math.floor(Math.random() * 30),
-    });
-
-    return this.reportRepo.save(report);
+      ...metrics,
+    }));
   }
 
   async getAllReports(filters?: { date?: string }): Promise<ShiftReportEntity[]> {
@@ -119,7 +110,17 @@ export class ShiftsService {
   }
 
   async getShiftSummary(date: string, shiftType?: 'day' | 'night' | 'swing'): Promise<ShiftReportEntity> {
-    return this.generateReport('', date);
+    const shift = await this.shiftRepo.findOne({ where: { date, ...(shiftType ? { type: shiftType } : {}) } });
+    if (shift) return this.generateReport(shift.id, date);
+
+    const metrics = await this.getProductionMetrics(date, '00:00', '23:59:59');
+    return this.reportRepo.create({
+      shift_id: '',
+      date,
+      shift_start: '00:00',
+      shift_end: '23:59:59',
+      ...metrics,
+    });
   }
 
   async getBatch(id: string): Promise<ProductionBatchEntity> {
@@ -136,42 +137,74 @@ export class ShiftsService {
     return shift;
   }
 
-  // TODO: Implement production report generation with real data from Orders, Downtime, DataCollection modules
-  private async generateReportForDate(dateStr: string): Promise<ShiftReportEntity> {
-    const start = dayjs(dateStr).startOf('day').toISOString();
-    const end = dayjs(dateStr).endOf('day').toISOString();
-
-    // Simulate report data until we have actual integration with Orders/Downtime/DataCollection modules
-    const totalOrders = Math.floor(Math.random() * 5);
-    const completedOrders = Math.floor(totalOrders * 0.8);
-    const cancelledOrders = totalOrders - completedOrders;
-    const oeeAvail = 85 + Math.floor(Math.random() * 10);
-    const oeePerf = 75 + Math.floor(Math.random() * 10);
-    const oeeQual = 90 + Math.floor(Math.random() * 5);
-    const oeeTotal = (oeeAvail / 100) * (oeePerf / 100) * (oeeQual / 100) * 100;
-
-    return this.reportRepo.save(this.reportRepo.create({
-      date: dateStr,
-      shift_start: '06:00',
-      shift_end: '14:00',
-      total_orders: totalOrders,
-      completed_orders: completedOrders,
-      cancelled_orders: cancelledOrders,
-      oee_availability: oeeAvail,
-      oee_performance: oeePerf,
-      oee_quality: oeeQual,
-      oee_total: parseFloat(oeeTotal.toFixed(2)),
-      throughput_units: 150 + Math.floor(Math.random() * 50),
-      active_machines: ['Resource1', 'Resource2', 'Resource3'],
-      offline_machines: [],
-      total_downtime_minutes: 10 + Math.floor(Math.random() * 30),
-    }));
-  }
-
   async createReport(dto: Partial<ShiftReportEntity>): Promise<ShiftReportEntity> {
     const report = this.reportRepo.create(dto);
     return this.reportRepo.save(report);
   }
 
-  /** TODO: Implement production report generation with real data from Orders, Downtime, DataCollection modules */
+  private async getProductionMetrics(date: string, startTime: string, endTime: string) {
+    const start = dayjs(`${date}T${startTime}`).toDate();
+    let end = dayjs(`${date}T${endTime}`).toDate();
+    if (end <= start) end = dayjs(end).add(1, 'day').toDate();
+
+    const [orderStats, downtimeStats, qualityStats, machines, alarms] = await Promise.all([
+      this.ordersRepo.createQueryBuilder('order')
+        .select('COUNT(*)', 'total_orders')
+        .addSelect("COUNT(CASE WHEN order.status = 'completed' THEN 1 END)", 'completed_orders')
+        .addSelect("COUNT(CASE WHEN order.status = 'cancelled' THEN 1 END)", 'cancelled_orders')
+        .addSelect('COALESCE(SUM(order.quantity), 0)', 'target_quantity')
+        .addSelect('COALESCE(SUM(order.completed_quantity), 0)', 'completed_quantity')
+        .where('order.created_at <= :end', { end })
+        .andWhere('(order.end_time IS NULL OR order.end_time >= :start)', { start })
+        .getRawOne(),
+      this.downtimeRepo.createQueryBuilder('downtime')
+        .select('COALESCE(SUM(downtime.duration_minutes), 0)', 'minutes')
+        .where('downtime.start_time < :end', { end })
+        .andWhere('(downtime.end_time IS NULL OR downtime.end_time > :start)', { start })
+        .getRawOne(),
+      this.dataPointsRepo.createQueryBuilder('point')
+        .select("COUNT(CASE WHEN point.quality = 'good' THEN 1 END)", 'good')
+        .addSelect("COUNT(CASE WHEN point.quality = 'bad' THEN 1 END)", 'bad')
+        .where('point.timestamp BETWEEN :start AND :end', { start, end })
+        .getRawOne(),
+      this.machinesRepo.find(),
+      this.alarmsRepo.find({ where: { acknowledged: false } }),
+    ]);
+
+    const totalOrders = Number(orderStats.total_orders) || 0;
+    const completedOrders = Number(orderStats.completed_orders) || 0;
+    const cancelledOrders = Number(orderStats.cancelled_orders) || 0;
+    const targetQuantity = Number(orderStats.target_quantity) || 0;
+    const completedQuantity = Number(orderStats.completed_quantity) || 0;
+    const downtimeMinutes = Number(downtimeStats.minutes) || 0;
+    const machineCount = machines.length;
+    const plannedMinutes = Math.max(0, (end.getTime() - start.getTime()) / 60000) * machineCount;
+    const availability = plannedMinutes ? Math.max(0, 100 * (plannedMinutes - downtimeMinutes) / plannedMinutes) : 0;
+    const performance = targetQuantity ? Math.min(100, 100 * completedQuantity / targetQuantity) : 0;
+    const good = Number(qualityStats.good) || 0;
+    const bad = Number(qualityStats.bad) || 0;
+    const quality = good + bad ? 100 * good / (good + bad) : 0;
+    const activeMachines = machines.filter((machine) => machine.status !== MachineStatusEnum.OFFLINE).map((machine) => machine.name);
+    const offlineMachines = machines.filter((machine) => machine.status === MachineStatusEnum.OFFLINE).map((machine) => machine.name);
+
+    return {
+      total_orders: totalOrders,
+      completed_orders: completedOrders,
+      cancelled_orders: cancelledOrders,
+      oee_availability: this.round(availability),
+      oee_performance: this.round(performance),
+      oee_quality: this.round(quality),
+      oee_total: this.round(availability * performance * quality / 10000),
+      throughput_units: completedQuantity,
+      active_machines: activeMachines,
+      offline_machines: offlineMachines,
+      total_downtime_minutes: this.round(downtimeMinutes),
+      critical_alarms: alarms.filter((alarm) => alarm.severity === 'critical').map((alarm) => alarm.message),
+      warnings: alarms.filter((alarm) => alarm.severity === 'warning' || alarm.severity === 'error').map((alarm) => alarm.message),
+    };
+  }
+
+  private round(value: number) {
+    return Math.round(value * 10) / 10;
+  }
 }

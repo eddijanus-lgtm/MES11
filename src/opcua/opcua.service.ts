@@ -148,6 +148,12 @@ export class OpcUaService implements OnModuleInit, OnModuleDestroy {
         const prefix = `ns=1;s=Station${resourceId}.dbProcessData.`;
         const queryPrefix = `ns=1;s=Station${resourceId}.stMES.Query.`;
         const statePrefix = `ns=1;s=Station${resourceId}.stMES.State.`;
+        const qualityCounters = resourceId === 3
+          ? Promise.all([
+            this.readNode(`ns=1;s=Station${resourceId}.LineInfo.uiProducedCount`),
+            this.readNode(`ns=1;s=Station${resourceId}.LineInfo.uiFailedCount`),
+          ]).catch(() => [])
+          : Promise.resolve([]);
         const [
           iCarrierID, iStepNo, iResourceID, iPar1, iPar2, iPar3, iPar4, ldtTimeStamp,
           xStart, xQryBusy, xDone, xError, uiCarrierId, uiResultCode, sOrderNo, uiOperationNo,
@@ -166,9 +172,11 @@ export class OpcUaService implements OnModuleInit, OnModuleDestroy {
           this.readNode(statePrefix + 'xErrL0'), this.readNode(statePrefix + 'xErrL1'),
           this.readNode(statePrefix + 'xErrL2'),
         ]);
+        const [good, bad] = await qualityCounters;
         this.emitTelemetry({
           kind: 'station.snapshot', resourceId, dbNumber: 151,
           iCarrierID, iStepNo, iResourceID, iPar1, iPar2, iPar3, iPar4, ldtTimeStamp,
+          ...(Number.isSafeInteger(good) && Number.isSafeInteger(bad) ? { qualityCounts: { good, bad } } : {}),
           state: { xAuto, xManual, xBusy, xReset, xErrL0, xErrL1, xErrL2 },
           handshake: { xStart, xQryBusy, xDone, xError, uiCarrierId, uiResultCode, sOrderNo, uiOperationNo },
         });
@@ -273,6 +281,6 @@ export class OpcUaService implements OnModuleInit, OnModuleDestroy {
   }
 
   private resourceIds(): number[] {
-    return this.configService.get('OPC_UA_DEMO_RESOURCE_IDS', '1,2').split(',').map(Number).filter(Number.isInteger);
+    return this.configService.get('OPC_UA_DEMO_RESOURCE_IDS', '1,2,3').split(',').map(Number).filter(Number.isInteger);
   }
 }

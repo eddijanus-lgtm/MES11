@@ -44,6 +44,7 @@ async function request(endpoint, options = {}) {
     }
 
     const text = await res.text();
+    if (options.responseType === "text") return text;
     if (!text) return null;
     try { return JSON.parse(text); }
     catch { throw new Error('Der Server hat keine gueltige API-Antwort geliefert. Bitte Backend/Proxy pruefen.'); }
@@ -60,5 +61,6 @@ export const api = {
   getSilent: (endpoint) => request(endpoint, { method: 'GET', silent: true }),
   post: (endpoint, body) => request(endpoint, { method: 'POST', body }),
   patch: (endpoint, body) => request(endpoint, { method: 'PATCH', body }),
-  del: (endpoint) => request(endpoint, { method: 'DELETE' }),
+  getText: (endpoint) => request(endpoint, { method: 'GET', responseType: 'text' }),
+  del: (endpoint, body) => request(endpoint, { method: 'DELETE', body }),
 };

@@ -1,3 +1,4 @@
+import { Link, useSearchParams } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { api } from "../api/client.js";
 import { useAuth } from "../providers/AuthProvider.jsx";
@@ -12,7 +13,10 @@ const STATUS_LABELS_RAW = { pending: "Ausstehend", in_progress: "In Arbeit", com
 export default function OrdersPage() {
   const { t } = useTranslation();
   const { user } = useAuth();
+  const [params] = useSearchParams();
+  const orderId = params.get("order");
   const [orders, setOrders] = useState([]);
+  const [loaded, setLoaded] = useState(false);
   const [machines, setMachines] = useState([]);
   const [carriers, setCarriers] = useState([]);
   const [routes, setRoutes] = useState({});
@@ -40,7 +44,7 @@ export default function OrdersPage() {
       setCarriers(Array.isArray(carrierData) ? carrierData : []);
       const routeEntries = await Promise.all(safeOrders.map((order) => api.get(`/orders/${order.id}/route`).then((route) => [order.id, route]).catch(() => [order.id, []])));
       setRoutes(Object.fromEntries(routeEntries));
-    } catch (requestError) { setError(requestError.message); }
+    } catch (requestError) { setError(requestError.message); } finally { setLoaded(true); }
   }
 
   function openCreate() { const firstDemoStation = machines.find((machine) => machine.resource_id === 1); setError(""); setForm({ ...EMPTY_FORM, name: nextOrderName(orders), machine_id: firstDemoStation?.id || machines[0]?.id || "" }); setModalOpen(true); }
@@ -67,7 +71,7 @@ export default function OrdersPage() {
   const machineNames = Object.fromEntries(machines.map((machine) => [machine.id, machine.name]));
   const resourceNames = Object.fromEntries(machines.map((machine) => [machine.resource_id, machine.name]));
   const carriersByOrder = carriers.reduce((groups, carrier) => { if (!carrier.order_id) return groups; return { ...groups, [carrier.order_id]: [...(groups[carrier.order_id] || []), carrier] }; }, {});
-  const filtered = orders.filter((order) => { const matchesText = !search || `${order.name} ${order.operation}`.toLowerCase().includes(search.toLowerCase()); return matchesText && (statusFilter === "all" || order.status === statusFilter); });
+  const filtered = orders.filter((order) => { if (orderId) return order.id === orderId; const matchesText = !search || `${order.name} ${order.operation}`.toLowerCase().includes(search.toLowerCase()); return matchesText && (statusFilter === "all" || order.status === statusFilter); });
 
   return (
     <div className="min-h-screen bg-neutral-50 p-6 space-y-6">
@@ -80,28 +84,28 @@ export default function OrdersPage() {
         {canManage && <button onClick={openCreate} disabled={machines.length === 0} className="rounded-lg bg-brand-primary px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[var(--color-brand-primary-dark)] disabled:cursor-not-allowed disabled:opacity-50">{t("orders.newOrder")}</button>}
       </header>
 
-      <DemoProcessHint t={t} />
+      {orderId ? <Link className="text-sm font-semibold text-brand-primary underline" to="/orders">{t("orders.all")}</Link> : <DemoProcessHint t={t} />}
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      {!orderId && <div className="grid gap-3 sm:grid-cols-3">
         <OrderStat label={t("orders.all")} value={orders.length} />
         <OrderStat label={t("orders.inProgress")} value={orders.filter((order) => order.status === "in_progress").length} accent="amber" />
         <OrderStat label={t("orders.completed")} value={orders.filter((order) => order.status === "completed").length} accent="green" />
-      </div>
+      </div>}
 
       {machines.length === 0 && <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{t("orders.noStation")}</p>}
       {error && <p role="alert" className="rounded-lg bg-status-error-bg px-4 py-3 text-sm text-status-error">{error}</p>}
 
-      <div className="grid gap-3 rounded-xl border border-neutral-200 bg-white p-4 sm:grid-cols-[1fr_220px]">
+      {!orderId && <div className="grid gap-3 rounded-xl border border-neutral-200 bg-white p-4 sm:grid-cols-[1fr_220px]">
         <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("orders.search")} className="rounded-lg border border-neutral-200 px-4 py-2.5 text-sm focus:border-brand-primary focus:outline-none focus:ring-2 focus:ring-brand-primary/20" />
         <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="rounded-lg border border-neutral-200 px-3 py-2.5 text-sm focus:border-brand-primary focus:outline-none">
           <option value="all">{t("orders.allStatus")}</option>
           {Object.entries(STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select>
-      </div>
+      </div>}
 
       <div className="grid gap-4">
         {filtered.map((order) => <OrderCard key={order.id} order={order} route={routes[order.id] || []} carriers={carriersByOrder[order.id] || []} machineName={machineNames[order.machine_id]} resourceNames={resourceNames} canManage={canManage} canDelete={canDelete} onEdit={openEdit} onDelete={requestDelete} t={t} STATUS_LABELS={STATUS_LABELS} />)}
-        {filtered.length === 0 && <p className="rounded-xl border border-neutral-200 bg-white p-10 text-center text-sm text-neutral-400">{t("orders.noOrders")}</p>}
+        {loaded && filtered.length === 0 && <p className="rounded-xl border border-neutral-200 bg-white p-10 text-center text-sm text-neutral-400">{t("orders.noOrders")}</p>}
       </div>
 
       {modalOpen && <OrderModal form={form} setForm={setForm} machines={machines} carriers={carriers} saving={saving} onSubmit={submit} onClose={() => { setModalOpen(false); setForm(EMPTY_FORM); }} t={t} STATUS_LABELS={STATUS_LABELS} />}

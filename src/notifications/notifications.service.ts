@@ -5,6 +5,9 @@ import * as nodemailer from 'nodemailer';
 import { MqttGatewayService } from '../opcua/mqtt-gateway.service';
 import { AlertRuleEntity, AlertHistoryEntity, NotificationChannelEntity } from './entities';
 import type { NotificationChannel } from './entities';
+import { OrderEntity } from '../orders/order.entity';
+import { OrderRouteStepEntity } from '../orders/order-route-step.entity';
+import { NotificationGateway } from './notification.gateway';
 
 @Injectable()
 export class NotificationsService {
@@ -18,7 +21,12 @@ export class NotificationsService {
     private readonly ruleRepo: Repository<AlertRuleEntity>,
     @InjectRepository(AlertHistoryEntity)
     private readonly historyRepo: Repository<AlertHistoryEntity>,
+    @InjectRepository(OrderEntity)
+    private readonly ordersRepo: Repository<OrderEntity>,
+    @InjectRepository(OrderRouteStepEntity)
+    private readonly routeStepsRepo: Repository<OrderRouteStepEntity>,
     private readonly mqttGateway?: MqttGatewayService,
+    private readonly notificationGateway?: NotificationGateway,
   ) {
     const host = process.env.SMTP_HOST;
     const port = parseInt(process.env.SMTP_PORT || '587', 10);
@@ -48,9 +56,12 @@ export class NotificationsService {
     let error: string | undefined;
     const channels: NotificationChannel[] = [];
 
-    if (rule.channels?.includes('email')) {
+    const configuredChannels = await this.getEnabledChannelConfigurations();
+    const requestedChannels = rule.channels || [];
+
+    if (requestedChannels.includes('email')) {
       try {
-        await this.sendEmail(rule, message, machineId);
+        await this.sendEmail(rule, message, machineId, configuredChannels.get('email'));
         channels.push('email');
         delivered = true;
       } catch (e) {
@@ -59,9 +70,9 @@ export class NotificationsService {
       }
     }
 
-    if (rule.channels?.includes('push')) {
+    if (requestedChannels.includes('push')) {
       try {
-        await this.sendPush(rule, message);
+        await this.sendPush();
         channels.push('push');
         delivered = true;
       } catch (e) {
@@ -69,14 +80,23 @@ export class NotificationsService {
       }
     }
 
-    if (rule.channels?.includes('mqtt')) {
+    if (requestedChannels.includes('mqtt')) {
       try {
-        await this.sendMqtt(rule, message);
+        await this.sendMqtt(rule, message, configuredChannels.get('mqtt'));
         channels.push('mqtt');
         delivered = true;
       } catch (e) {
-        const machineName2 = rule.machine_id || 'unknown';
         if (!error) error = String(e.message || e);
+      }
+    }
+
+    if (requestedChannels.includes('websocket')) {
+      try {
+        await this.sendWebSocket(rule, message, machineId, configuredChannels.get('websocket'));
+        channels.push('websocket');
+        delivered = true;
+      } catch (e) {
+        error = error || String((e as Error).message || e);
       }
     }
 
@@ -98,30 +118,33 @@ export class NotificationsService {
     return this.historyRepo.save(history);
   }
 
-  private async sendEmail(rule: AlertRuleEntity, message: string, machineId?: string): Promise<void> {
+  private async sendEmail(rule: AlertRuleEntity, message: string, machineId?: string, config?: Record<string, string>): Promise<void> {
+    if (!config) throw new Error('Kein aktiver E-Mail-Kanal konfiguriert');
     if (!this.transporter) throw new Error('SMTP transport not configured');
 
-    const to = process.env.ALERT_EMAIL_TARGETS || 'admin@localhost';
+    const to = config.recipient || process.env.ALERT_EMAIL_TARGETS;
+    if (!to) throw new Error('Kein E-Mail-Empfänger konfiguriert');
     const subject = `[MES Alert ${rule.severity.toUpperCase()}] ${rule.name}`;
 
     await this.transporter.sendMail({
       from: `"wara-mes Alerts" <${process.env.SMTP_USER || 'noreply@mes.local'}>`,
       to,
       subject,
-      html: `<h3>${rule.name}</h3><p>${message}</p><p>Maschine: ${machineId || 'N/A'}</p><p>Zeit: ${new Date().toLocaleString('de-DE')}</p>`,
+      html: `<h3>${rule.name}</h3><p>${message}</p><p>Maschine: ${machineId || 'Nicht zugeordnet'}</p><p>Zeit: ${new Date().toLocaleString('de-DE')}</p>`,
     });
 
     this.logger.log(`Email notification sent for alert rule ${rule.id} (severity: ${rule.severity})`);
   }
 
-  private async sendPush(rule: AlertRuleEntity, message: string): Promise<void> {
-    const targetSub = process.env.ALERT_PUSH_SUBSCRIPTIONS ? JSON.parse(process.env.ALERT_PUSH_SUBSCRIPTIONS) : [];
-    this.logger.log(`Push notification dispatched for ${rule.id}: ${message.substring(0, 64)}...`);
+  private async sendPush(): Promise<void> {
+    throw new Error('Push-Benachrichtigungen sind nicht konfiguriert');
   }
 
-  private async sendMqtt(rule: AlertRuleEntity, messageText: string): Promise<void> {
+  private async sendMqtt(rule: AlertRuleEntity, messageText: string, config?: Record<string, string>): Promise<void> {
+    if (!config) throw new Error('Kein aktiver MQTT-Kanal konfiguriert');
     if (!this.mqttGateway) throw new Error('MQTT gateway not available');
-    const topic = process.env.ALERT_MQTT_TOPIC || 'mes/alerts';
+    const topic = config.topic || process.env.ALERT_MQTT_TOPIC;
+    if (!topic) throw new Error('Kein MQTT-Topic konfiguriert');
     const payload = {
       rule_id: rule.id,
       rule_name: rule.name,
@@ -131,8 +154,20 @@ export class NotificationsService {
       timestamp: new Date().toISOString(),
     };
 
-    await this.mqttGateway['client'].publish(topic, JSON.stringify(payload));
+    await this.mqttGateway.publish(topic, payload);
     this.logger.log(`MQTT alert dispatched for ${rule.id} on topic ${topic}`);
+  }
+
+  private async sendWebSocket(rule: AlertRuleEntity, message: string, machineId?: string, config?: Record<string, string>): Promise<void> {
+    if (!config) throw new Error('Kein aktiver WebSocket-Kanal konfiguriert');
+    if (!this.notificationGateway) throw new Error('WebSocket gateway not available');
+    this.notificationGateway.broadcastNotification({
+      rule_id: rule.id,
+      rule_name: rule.name,
+      severity: rule.severity,
+      machine_id: machineId || rule.machine_id,
+      message,
+    });
   }
 
   async evaluateRules(telemetryData: Record<string, any>): Promise<void> {
@@ -200,9 +235,62 @@ export class NotificationsService {
   }
 
   async createChannel(dto: Partial<NotificationChannelEntity>): Promise<NotificationChannelEntity> {
-    const channel = this.channelRepo.create(dto);
-    this.logger.log(`Notification channel created: ${dto.channel} (${dto.enabled ? 'enabled' : 'disabled'})`);
+    const existing = dto.channel
+      ? await this.channelRepo.findOne({ where: { channel: dto.channel } })
+      : null;
+    const channel = existing ? Object.assign(existing, dto) : this.channelRepo.create(dto);
+    this.logger.log(`Notification channel ${existing ? 'updated' : 'created'}: ${dto.channel} (${dto.enabled ? 'enabled' : 'disabled'})`);
     return this.channelRepo.save(channel);
+  }
+
+  async updateChannel(id: string, dto: Partial<NotificationChannelEntity>): Promise<NotificationChannelEntity> {
+    const channel = await this.channelRepo.findOne({ where: { id } });
+    if (!channel) throw new Error(`Notification channel ${id} not found`);
+    Object.assign(channel, dto);
+    return this.channelRepo.save(channel);
+  }
+
+  async deleteChannel(id: string): Promise<void> {
+    const channel = await this.channelRepo.findOne({ where: { id } });
+    if (!channel) throw new Error(`Notification channel ${id} not found`);
+    await this.channelRepo.remove(channel);
+  }
+
+  async testChannel(id: string): Promise<{ message: string }> {
+    const channel = await this.channelRepo.findOne({ where: { id } });
+    if (!channel) throw new Error(`Notification channel ${id} not found`);
+    if (!channel.enabled) throw new Error('Der Kanal ist deaktiviert');
+
+    const rule = { id: 'channel-test', name: 'Kanaltest', severity: 'info', machine_id: undefined } as AlertRuleEntity;
+    const message = 'Dies ist eine Testmeldung aus dem MES.';
+    const config = this.parseChannelConfig(channel.config);
+    if (channel.channel === 'email') await this.sendEmail(rule, message, undefined, config);
+    else if (channel.channel === 'mqtt') await this.sendMqtt(rule, message, config);
+    else if (channel.channel === 'websocket') await this.sendWebSocket(rule, message, undefined, config);
+    else await this.sendPush();
+    return { message: `Test über ${channel.channel} erfolgreich ausgelöst` };
+  }
+
+  private async getEnabledChannelConfigurations() {
+    const channels = await this.channelRepo.find({
+      where: { enabled: true },
+      order: { updated_at: 'DESC' },
+    });
+    const result = new Map<NotificationChannel, Record<string, string>>();
+    for (const channel of channels) {
+      if (!result.has(channel.channel)) result.set(channel.channel, this.parseChannelConfig(channel.config));
+    }
+    return result;
+  }
+
+  private parseChannelConfig(config?: string): Record<string, string> {
+    if (!config) return {};
+    try {
+      const parsed = JSON.parse(config);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
   }
 
   async getAllRules(): Promise<AlertRuleEntity[]> {
@@ -255,6 +343,28 @@ export class NotificationsService {
     return query.take(filters?.limit || 100).getMany();
   }
 
+  async getOrderNotifications() {
+    const orders = await this.ordersRepo.find({
+      order: { created_at: 'DESC' },
+      take: 100,
+    });
+    if (!orders.length) return [];
+
+    const routeSteps = await this.routeStepsRepo.find({
+      where: orders.map((order) => ({ order_id: order.id, step_no: 1 })),
+    });
+    const firstStepByOrder = new Map(routeSteps.map((step) => [step.order_id, step]));
+
+    return orders.map((order) => ({
+      id: order.id,
+      name: order.name,
+      quantity: order.quantity,
+      status: order.status,
+      created_at: order.created_at,
+      parameters: firstStepByOrder.get(order.id)?.parameters ?? {},
+    }));
+  }
+
   async getRuleStats(): Promise<{ total: number; active: number; firing: number; by_severity: Record<string, number> }> {
     const total = await this.ruleRepo.count();
     const active = await this.ruleRepo.count({ where: { is_active: true } });
@@ -281,6 +391,16 @@ export class NotificationsService {
     }
 
     return { total, delivered, not_delivered: notDelivered, by_severity: bySeverity };
+  }
+
+  async getDeliveryRate() {
+    const totalSent = await this.historyRepo.count();
+    const delivered = await this.historyRepo.count({ where: { delivered: true } });
+    return {
+      rate: totalSent ? Math.round((delivered / totalSent) * 1000) / 10 : 0,
+      total_sent: totalSent,
+      total_failed: totalSent - delivered,
+    };
   }
 
   async deleteRule(id: string): Promise<void> {

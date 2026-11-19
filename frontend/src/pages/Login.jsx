@@ -25,9 +25,9 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen bg-neutral-100 grid lg:grid-cols-[1.1fr_0.9fr]">
       <section className="hidden lg:flex relative overflow-hidden bg-neutral-900 text-white p-14 flex-col justify-between">
-        <div className="absolute inset-0 opacity-30 bg-[radial-gradient(circle_at_20%_10%,var(--color-brand-primary),transparent_38%),radial-gradient(circle_at_85%_80%,var(--color-brand-cyan),transparent_35%)]" />
+        <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_20%_10%,var(--color-brand-primary),transparent_50%)]" />
         <div className="relative">
-          <p className="font-mono text-xs uppercase tracking-[0.3em] text-brand-orange">WARA MES</p>
+          <p className="font-mono text-xs uppercase tracking-[0.3em] text-[#e6a875]">WARA MES</p>
           <h1 className="mt-6 max-w-xl text-5xl font-bold leading-tight">{t("login.heroTitle")}</h1>
         </div>
         <div className="relative font-mono text-sm text-neutral-300 space-y-2">
@@ -38,7 +38,7 @@ export default function LoginPage() {
 
       <main className="flex items-center justify-center p-6 sm:p-10">
         <div className="w-full max-w-md bg-white border border-neutral-200 rounded-2xl shadow-hover p-8 sm:p-10">
-          <img src="/logo.jpg" alt="WARA MES" className="h-12 w-auto object-contain" />
+          <img src="/logo.jpg" alt="WARA MES" className="mes-school-logo h-12 w-auto object-contain" />
           <h2 className="mt-8 text-2xl font-bold text-neutral-900">{t("login.title")}</h2>
           <p className="mt-2 text-sm text-neutral-500">{t("login.subtitle")}</p>
 

@@ -19,6 +19,18 @@ export class NotificationsController {
   @Roles(UserRoleEnum.ADMIN)
   createChannel(@Body() dto: any) { return this.notificationsService.createChannel(dto); }
 
+  @Patch('channels/:id')
+  @Roles(UserRoleEnum.ADMIN)
+  updateChannel(@Param('id') id: string, @Body() dto: any) { return this.notificationsService.updateChannel(id, dto); }
+
+  @Delete('channels/:id')
+  @Roles(UserRoleEnum.ADMIN)
+  deleteChannel(@Param('id') id: string) { return this.notificationsService.deleteChannel(id); }
+
+  @Post('channels/:id/test')
+  @Roles(UserRoleEnum.ADMIN)
+  testChannel(@Param('id') id: string) { return this.notificationsService.testChannel(id); }
+
   // --- Alert Rules ---
 
   @Get('rules')
@@ -47,6 +59,12 @@ export class NotificationsController {
 
   // --- Alert History ---
 
+  @Get('orders')
+  @Roles(UserRoleEnum.ADMIN, UserRoleEnum.OPERATOR, UserRoleEnum.VIEWER)
+  getOrderNotifications() {
+    return this.notificationsService.getOrderNotifications();
+  }
+
   @Get('history')
   @Roles(UserRoleEnum.ADMIN, UserRoleEnum.OPERATOR, UserRoleEnum.VIEWER)
   getHistory(
@@ -71,7 +89,7 @@ export class NotificationsController {
   @Get('delivery-rate')
   @Roles(UserRoleEnum.ADMIN, UserRoleEnum.OPERATOR, UserRoleEnum.VIEWER)
   getDeliveryRate() { 
-    return { rate: 0, total_sent: 0, total_failed: 0 }; 
+    return this.notificationsService.getDeliveryRate();
   }
 
   // --- Manual Trigger (for testing/integration) ---

@@ -6,6 +6,8 @@ import { canDeleteMachines, canManageMachines } from "../utils/roles.js";
 import { useTranslation } from "../i18n/I18nProvider.jsx";
 import PageInfo from "../components/PageInfo.jsx";
 
+const productionOrder = new Map([[2, 0], [1, 1], [3, 2]]);
+
 export default function MachinesPage() {
   const { t } = useTranslation();
   const { user } = useAuth();
@@ -77,6 +79,13 @@ export default function MachinesPage() {
   }
 
   const onlineCount = machines.filter((m) => ["online", "running"].includes(m.status)).length;
+  const searchTerm = search.toLowerCase();
+  const visibleMachines = machines
+    .filter((machine) => (machine.name || "").toLowerCase().includes(searchTerm))
+    .sort((left, right) =>
+      (productionOrder.get(left.resource_id) ?? productionOrder.size) -
+      (productionOrder.get(right.resource_id) ?? productionOrder.size)
+    );
 
   return (
     <div className="min-h-screen bg-neutral-50">
@@ -102,7 +111,7 @@ export default function MachinesPage() {
 
         <input type="text" placeholder={t("machines.search")} value={search} onChange={(e) => setSearch(e.target.value)} className="w-full bg-white border border-neutral-200 rounded-lg px-4 py-2.5 text-sm text-neutral-800 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-brand-primary/30 focus:border-brand-primary transition-all" />
 
-        {machines.filter((m) => !search || (m.name||"").toLowerCase().includes(search.toLowerCase())).length > 0 ? (
+        {visibleMachines.length > 0 ? (
           <div className="bg-white rounded-lg shadow-card border border-neutral-200 overflow-hidden">
             <table className="w-full">
               <thead>
@@ -115,7 +124,7 @@ export default function MachinesPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-100">
-                {machines.filter((m) => !search || (m.name||"").toLowerCase().includes(search.toLowerCase())).map((m, i) => {
+                {visibleMachines.map((m, i) => {
                   const statusOk = ["online", "running"].includes(m.status);
                   return (
                     <tr key={m.id} className="hover:bg-neutral-50 transition-colors">

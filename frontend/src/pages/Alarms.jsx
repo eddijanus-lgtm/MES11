@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { api } from "../api/client.js";
 import { useToasts } from "../providers/ToastProvider.jsx";
 import { useTranslation } from "../i18n/I18nProvider.jsx";
+import { useAuth } from "../providers/AuthProvider.jsx";
+import { hasRole, ROLES } from "../utils/roles.js";
 import PageInfo from "../components/PageInfo.jsx";
 
 export default function AlarmsPage() {
@@ -13,6 +15,8 @@ export default function AlarmsPage() {
   const [selected, setSelected] = useState({});
   const [bulkLoading, setBulkLoading] = useState(false);
   const toast = useToasts();
+  const { user } = useAuth();
+  const canAcknowledge = hasRole(user, ROLES.ADMIN, ROLES.OPERATOR);
 
   useEffect(() => {
     setLoading(true);
@@ -70,7 +74,7 @@ export default function AlarmsPage() {
     setBulkLoading(true);
     const ids = Object.keys(selected);
     try {
-      await api.delete("/alarms/bulk", { data: ids });
+      await api.del("/alarms/bulk", ids);
       setAlarms((prev) => prev.filter((a) => !ids.includes(a.id)));
       setSelected({});
       toast.addToast({ type: "info", message: `${ids.length} ${t("alarms.toastBulkDeleted")}` });
@@ -83,7 +87,7 @@ export default function AlarmsPage() {
       const params = new URLSearchParams();
       if (filter !== "all") params.set("severity", filter);
       if (ackFilter !== "all") params.set("acknowledged", ackFilter === "acknowledged" ? "true" : "false");
-      const res = await api.get(`/alarms/export/csv?${params.toString()}`);
+      const res = await api.getText(`/alarms/export/csv?${params.toString()}`);
       const blob = new Blob([res], { type: "text/csv" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a"); a.href = url; a.download = `alarms-export-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
@@ -94,15 +98,15 @@ export default function AlarmsPage() {
 
   function formatDate(d) { if (!d) return "-"; return new Date(d).toLocaleString("de-DE"); }
 
-  const canBulkAck = selCount > 0 && filtered.some((a) => !a.acknowledged);
-  const canBulkDelete = selCount > 0;
+  const canBulkAck = canAcknowledge && alarms.some((a) => selected[a.id] && !a.acknowledged);
+  const canBulkDelete = hasRole(user, ROLES.ADMIN) && selCount > 0;
 
   return (
-    <div className="min-h-screen bg-neutral-50">
-      <main className="p-6 space-y-6">
+    <div className="bg-neutral-50">
+      <section className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-neutral-900 inline-flex items-center">{t("alarms.title")}<PageInfo page="alarms" /></h1>
+            <h2 className="text-2xl font-bold text-neutral-900 inline-flex items-center">{t("alarms.title")}<PageInfo page="alarms" /></h2>
             <p className="text-sm text-neutral-500 mt-0.5">{t("alarms.subtitle")} {activeCount > 0 && <span>({activeCount} {t("alarms.open")})</span>}</p>
           </div>
           <button onClick={handleExportCsv} className="px-4 py-2 bg-white border border-neutral-200 rounded-lg text-xs font-semibold text-neutral-700 hover:bg-neutral-50 transition-colors">{t("alarms.csvExport")}</button>
@@ -131,7 +135,7 @@ export default function AlarmsPage() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-neutral-200">
-                  <th className="px-5 py-3 w-10"><input type="checkbox" checked={allSelected} onChange={toggleAll} className="w-4 h-4 rounded border-neutral-300 text-brand-primary focus:ring-brand-primary" /></th>
+                  <th className="px-5 py-3 w-10"><input type="checkbox" disabled={!canAcknowledge} checked={allSelected} onChange={toggleAll} className="w-4 h-4 rounded border-neutral-300 text-brand-primary focus:ring-brand-primary" /></th>
                   <th className="px-5 py-3 text-left text-xs font-semibold text-neutral-500 uppercase tracking-wider">{t("alarms.id")}</th>
                   <th className="px-5 py-3 text-left text-xs font-semibold text-neutral-500 uppercase tracking-wider">{t("alarms.machine")}</th>
                   <th className="px-5 py-3 text-left text-xs font-semibold text-neutral-500 uppercase tracking-wider">{t("alarms.message")}</th>
@@ -143,20 +147,20 @@ export default function AlarmsPage() {
               <tbody className="divide-y divide-neutral-100">
                 {filtered.map((a) => (
                   <tr key={a.id} className={`hover:bg-neutral-50 transition-colors ${a.acknowledged ? "opacity-60" : ""}`}>
-                    <td className="px-5 py-3.5"><input type="checkbox" checked={!!selected[a.id]} onChange={() => toggleSelect(a.id)} className="w-4 h-4 rounded border-neutral-300 text-brand-primary focus:ring-brand-primary" /></td>
+                    <td className="px-5 py-3.5"><input type="checkbox" disabled={!canAcknowledge} checked={!!selected[a.id]} onChange={() => toggleSelect(a.id)} className="w-4 h-4 rounded border-neutral-300 text-brand-primary focus:ring-brand-primary" /></td>
                     <td className="px-5 py-3.5 text-xs font-mono text-neutral-500">{(a.id || "").substring(0, 8)}</td>
-                    <td className="px-5 py-3.5 text-sm text-neutral-700">{a.machineId || "-"}</td>
+                    <td className="px-5 py-3.5 text-sm text-neutral-700">{a.machine_id || "-"}</td>
                     <td className="px-5 py-3.5 text-sm text-neutral-700">{a.message || a.description || "-"}</td>
                     <td className="px-5 py-3.5"><span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium ${sevClass(a.severity)}`}>{a.severity ? a.severity.charAt(0).toUpperCase() + a.severity.slice(1) : "-"}</span></td>
                     <td className="px-5 py-3.5 text-xs text-neutral-500">{formatDate(a.acknowledged_at)}</td>
-                    <td className="px-5 py-3.5 text-right">{!a.acknowledged && <button onClick={() => handleAcknowledge(a.id)} className="px-3 py-1.5 bg-brand-primary/10 text-brand-primary rounded-md text-xs font-semibold hover:bg-brand-primary/20 transition-colors">{t("alarms.acknowledge")}</button>}</td>
+                    <td className="px-5 py-3.5 text-right">{canAcknowledge && !a.acknowledged && <button onClick={() => handleAcknowledge(a.id)} className="px-3 py-1.5 bg-brand-primary/10 text-brand-primary rounded-md text-xs font-semibold hover:bg-brand-primary/20 transition-colors">{t("alarms.acknowledge")}</button>}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
-      </main>
+      </section>
     </div>
   );
 }

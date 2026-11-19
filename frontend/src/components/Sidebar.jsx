@@ -5,16 +5,14 @@ import { useTranslation } from "../i18n/I18nProvider.jsx";
 import { useTheme } from "../providers/ThemeProvider.jsx";
 
 const navItems = [
-  { path: "/", label: "nav.dashboard", icon: "📊" },
-  { path: "/machines", label: "nav.stations", icon: "⚙️" },
-  { path: "/orders", label: "nav.orders", icon: "▤" },
-  { path: "/alarms", label: "nav.alarms", icon: "🔔" },
-  { path: "/notifications", label: "nav.notifications", icon: "📢" },
-  { path: "/shifts", label: "nav.shifts", icon: "⏱️" },
-  { path: "/traces", label: "nav.traces", icon: "📈" },
-  { path: "/carriers", label: "nav.carrier", icon: "▣" },
-  { path: "/shopfloor", label: "nav.shopfloor", icon: "▥" },
-  { path: "/users", label: "nav.users", icon: "👤", roles: [ROLES.ADMIN] },
+  { path: "/", label: "nav.dashboard", icon: "M3 3v18h18M8 16v-4m5 4V7m5 9V4" },
+  { path: "/machines", label: "nav.stations", icon: "M6 20h12M8 16v4m8-4v4M3 4h18v12H3zM7 8h4m-4 4h7" },
+  { path: "/orders", label: "nav.orders", icon: "M6 3h9l4 4v14H6zM14 3v5h5M9 12h7m-7 4h7" },
+  { path: "/notifications", label: "nav.notifications", icon: "M3 9v5h5l10 4V5L8 9H3zm4 5 2 6h3l-2-5" },
+  { path: "/carriers", label: "nav.carrier", icon: "m3 7 9-4 9 4v10l-9 4-9-4V7zm0 0 9 4 9-4m-9 4v10" },
+  { path: "/shopfloor", label: "nav.shopfloor", icon: "M3 21V10l6 3V9l6 4V5h4l2 16H3zm4-4h2m4 0h2" },
+  { path: "/webshop", label: "nav.webshop", icon: "M4 8h16l1 13H3L4 8zm4 0V6a4 4 0 0 1 8 0v2", roles: [ROLES.ADMIN, ROLES.OPERATOR] },
+  { path: "/users", label: "nav.users", icon: "M8 7a4 4 0 1 0 8 0 4 4 0 1 0-8 0zm-3 14v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2", roles: [ROLES.ADMIN] },
 ];
 
 export default function Sidebar() {
@@ -24,30 +22,33 @@ export default function Sidebar() {
   const { dark, toggleTheme } = useTheme();
 
   return (
-    <div className="sticky top-0 h-screen w-64 shrink-0 bg-neutral-100 border-r border-neutral-200 flex flex-col">
-      <div className="p-5 border-b border-neutral-100 flex items-center gap-3">
+    <div className="mes-sidebar sticky top-0 h-screen w-64 shrink-0 bg-neutral-100 border-r border-neutral-200 flex flex-col">
+      <div className="px-5 py-4 border-b border-neutral-200 flex flex-col items-start gap-3">
+        <img src="/logo.jpg" alt="Walther Rathenau Gewerbeschule" className="mes-school-logo w-40 object-contain" />
         <div>
-          <h1 className="text-lg font-bold tracking-wide text-neutral-800"><span className="text-brand-primary">MES </span>Shopfloor</h1>
-          <p className="text-xs text-neutral-400 mt-1">OT/IT Gateway</p>
+          <p className="text-sm font-semibold text-neutral-800">MES Shopfloor</p>
+          <p className="text-xs text-neutral-500">OT/IT Gateway</p>
         </div>
-        <img src="/logo.jpg" alt="MES Logo" className="flex-shrink-0 w-28 object-contain" />
       </div>
 
-      <nav className="flex-1 py-3 px-2 space-y-0.5">
+      <nav className="min-h-0 flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
         {navItems.filter((item) => !item.roles || hasRole(user, ...item.roles)).map((item) => {
           const isActive = location.pathname === item.path || (item.path !== "/" && location.pathname.startsWith(item.path));
           return (
             <Link
               key={item.path}
               to={item.path}
-              className={`flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-all duration-150 ${
+              aria-current={isActive ? "page" : undefined}
+              className={`grid min-h-9 grid-cols-[1.25rem_1fr] items-center gap-3 rounded-md px-3 py-2 text-sm leading-5 font-medium transition-colors ${
                 isActive
-                  ? "bg-brand-primary text-white shadow-sm"
+                  ? "bg-neutral-200 text-neutral-900"
                   : "text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900"
               }`}
             >
-              <span className="text-base leading-none">{item.icon}</span>
-              {t(item.label)}
+              <svg aria-hidden="true" viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round">
+                <path d={item.icon} />
+              </svg>
+              <span className="mes-sidebar-label">{t(item.label)}</span>
             </Link>
           );
         })}
@@ -63,8 +64,10 @@ export default function Sidebar() {
               }`}>{l.toUpperCase()}</button>
             ))}
           </div>
-          <button onClick={toggleTheme} className="px-2 py-1 rounded-md border border-neutral-200 bg-neutral-100 text-neutral-500 hover:bg-neutral-200 transition text-sm leading-none" title={dark ? "Light mode" : "Dark mode"}>
-            {dark ? '☀️' : '🌙'}
+          <button onClick={toggleTheme} className="grid size-7 place-items-center rounded-md border border-neutral-200 bg-neutral-100 text-neutral-600 hover:bg-neutral-200 transition" aria-label={dark ? "Light mode" : "Dark mode"}>
+            <svg aria-hidden="true" viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round">
+              <path d={dark ? "M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M19 5l-1.5 1.5m-11 11L5 19M8 12a4 4 0 1 0 8 0 4 4 0 1 0-8 0" : "M20 15a8 8 0 1 1-11-11 8 8 0 0 0 11 11Z"} />
+            </svg>
           </button>
         </div>
         <div className="rounded-md bg-neutral-50 px-3 py-2">
@@ -73,7 +76,7 @@ export default function Sidebar() {
         </div>
         <div className="flex items-center gap-2 text-xs text-neutral-400">
           <span className="inline-block w-1.5 h-1.5 rounded-full bg-status-success animate-pulse" />
-          {t("sidebar.session_active")}
+          {t("sidebar.sessionActive")}
         </div>
         <button onClick={logout} className="mt-3 w-full rounded-md border border-neutral-200 px-3 py-2 text-left text-xs font-medium text-neutral-600 transition hover:border-status-error/30 hover:bg-status-error-bg hover:text-status-error">
           {t("sidebar.logout")}

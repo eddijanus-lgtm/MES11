@@ -2,7 +2,7 @@ import { ApiTags, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { Controller, Get, Post, Body } from '@nestjs/common';
 import { OpcUaService } from './opcua.service';
 import { MqttGatewayService } from './mqtt-gateway.service';
-import { MqttPublishDto, OpcUaReadDto, MachineControlDto } from './shopfloor-gateway.dto';
+import { MqttPublishDto, OpcUaReadDto, MachineControlDto, WebshopCheckoutDto } from './shopfloor-gateway.dto';
 import { Roles } from '../auth/roles.decorator';
 import { UserRoleEnum } from '../users/user.entity';
 import { StMesHandshakeService } from './stmes-handshake.service';
@@ -72,6 +72,13 @@ export class ShopfloorGatewayController {
   @Roles(UserRoleEnum.ADMIN, UserRoleEnum.OPERATOR, UserRoleEnum.VIEWER)
   getRecentWebshopOrders() {
     return this.webshopOrdersService.getRecentOrders();
+  }
+
+  @Post('webshop/orders')
+  @Roles(UserRoleEnum.ADMIN, UserRoleEnum.OPERATOR)
+  async checkoutWebshopOrder(@Body() dto: WebshopCheckoutDto) {
+    await this.webshopOrdersService.publishOrder(dto);
+    return { published: true };
   }
 
   @Post('machine/control')

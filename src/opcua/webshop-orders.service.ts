@@ -1,5 +1,4 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { RoutingService, WebshopProductionPayload } from '../orders/routing.service';
 import { MqttGatewayService } from './mqtt-gateway.service';
 
@@ -11,15 +10,18 @@ export class WebshopOrdersService implements OnModuleInit {
   private recentOrders: Array<{ orderName: string; payload: WebshopProductionPayload; timestamp: string }> = [];
 
   constructor(
-    private readonly configService: ConfigService,
     private readonly mqtt: MqttGatewayService,
     private readonly routing: RoutingService,
   ) {}
 
   onModuleInit() {
-    const topic = this.configService.get('WEBSHOP_MQTT_TOPIC', 'i4.0/production/orders');
+    const topic = this.mqtt.webshopOrderTopic;
     this.mqtt.onMessage(topic, (payload) => void this.handleWebshopOrder(payload));
     this.logger.log(`Listening for webshop orders on MQTT topic ${topic}`);
+  }
+
+  publishOrder(payload: WebshopProductionPayload) {
+    return this.mqtt.publishWebshopOrder(payload);
   }
 
   getRecentOrders() {

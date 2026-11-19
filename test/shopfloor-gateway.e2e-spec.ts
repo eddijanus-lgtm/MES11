@@ -28,7 +28,10 @@ describe('ShopfloorGatewayController (e2e)', () => {
     publish: jest.fn(async () => undefined),
   };
   const stMesHandshakeService = { findRecent: jest.fn(() => [{ id: 'h1', resource_id: 1 }]) };
-  const webshopOrdersService = { getRecentOrders: jest.fn(() => [{ orderName: 'WEBSHOP-1' }]) };
+  const webshopOrdersService = {
+    getRecentOrders: jest.fn(() => [{ orderName: 'WEBSHOP-1' }]),
+    publishOrder: jest.fn(async () => undefined),
+  };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -90,5 +93,25 @@ describe('ShopfloorGatewayController (e2e)', () => {
       .expect(({ body }) => expect(body).toEqual({ published: true, topic: 'mes/test' }));
 
     expect(mqttGatewayService.publish).toHaveBeenCalledWith('mes/test', { hello: 'world' });
+  });
+
+  it('forwards a valid webshop checkout to the order publisher', async () => {
+    const box = { bDeckelfarbe: 2, uiKugelRot: 3, uiKugelGruen: 2, uiKugelBlau: 0 };
+    await request(app.getHttpServer())
+      .post('/api/shopfloor/webshop/orders')
+      .send(box)
+      .expect(201)
+      .expect(({ body }) => expect(body).toEqual({ published: true }));
+
+    expect(webshopOrdersService.publishOrder).toHaveBeenCalledWith(expect.objectContaining(box));
+  });
+
+  it('rejects unsupported lid colors, out-of-range counts and caller-selected MQTT topics', async () => {
+    await request(app.getHttpServer())
+      .post('/api/shopfloor/webshop/orders')
+      .send({ bDeckelfarbe: 3, uiKugelRot: -1, uiKugelGruen: 2, uiKugelBlau: 0, topic: 'mes/test' })
+      .expect(400);
+
+    expect(webshopOrdersService.publishOrder).not.toHaveBeenCalled();
   });
 });

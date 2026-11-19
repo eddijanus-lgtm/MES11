@@ -66,6 +66,8 @@ export default function Dashboard() {
   const [kpis, setKpis] = useState(null);
   const [trendsLoaded, setTrendsLoaded] = useState(false);
   const wsRef = useRef(null);
+  const [inspection, setInspection] = useState(null);
+  const [stationSamples, setStationSamples] = useState({});
   const { token } = useAuth();
 
   const exportReport = (scope) => {
@@ -98,10 +100,24 @@ export default function Dashboard() {
       wsRef.current = ws;
       ws.onopen = () => ws.send(JSON.stringify({ type: "auth", token }));
       ws.onmessage = (event) => {
-        try { const msg = JSON.parse(event.data); if (msg.type === "kpis" && msg.payload) setKpis(msg.payload); } catch {}
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === "kpis" && msg.payload) setKpis(msg.payload);
+          if (msg.type === "shopfloor.telemetry" && msg.payload?.kind === "station.snapshot") {
+            const sample = msg.payload;
+            if (sample.resourceId === 3) setInspection(sample.qualityCounts ?? null);
+            if (sample.iCarrierID > 0 && [sample.iPar2, sample.iPar3, sample.iPar4].every(Number.isFinite)) {
+              setStationSamples((previous) => {
+                const latest = previous[sample.resourceId];
+                if (latest?.ldtTimeStamp === sample.ldtTimeStamp && latest?.iCarrierID === sample.iCarrierID) return previous;
+                return { ...previous, [sample.resourceId]: sample };
+              });
+            }
+          }
+        } catch {}
       };
       ws.onerror = () => {};
-      ws.onclose = () => { wsRef.current = null; };
+      ws.onclose = () => { if (wsRef.current === ws) wsRef.current = null; };
     };
 
     loadMetadata();
@@ -145,7 +161,7 @@ export default function Dashboard() {
         </div>
 
         <OperationsIntelligence kpis={kpis} t={t} />
-        <TrendChartsSection onTrendsLoaded={setTrendsLoaded} trendsLoaded={trendsLoaded} t={t} />
+        <TrendChartsSection machines={machines} stationSamples={stationSamples} inspection={inspection} onTrendsLoaded={setTrendsLoaded} t={t} />
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <StationOverview machines={machines} carriers={carriers} t={t} />
@@ -213,68 +229,57 @@ function OperationsIntelligence({ kpis, t }) {
   );
 }
 
-function TrendChartsSection({ onTrendsLoaded, trendsLoaded, t }) {
+function TrendChartsSection({ machines, stationSamples, inspection, onTrendsLoaded, t }) {
   const [activeTab, setActiveTab] = useState("telemetry");
   const [datePreset, setDatePreset] = useState("8h");
   const [interval, setInterval_] = useState("5 min");
   const [selectedMachine, setSelectedMachine_] = useState("");
-  const [machines, setMachines] = useState([]);
-
-  const [telemetryData, setTelemetryData] = useState(null);
-  const [orderData, setOrderData] = useState(null);
-  const [oeeData, setOeeData] = useState(null);
-  const [downtimeData, setDowntimeData] = useState(null);
-  const [qualityData, setQualityData] = useState(null);
-  const [throughputData, setThroughputData] = useState(null);
-  const [machineStatusData, setMachineStatusData] = useState(null);
+  const [trends, setTrends] = useState({});
   const [paretoData, setParetoData] = useState(null);
+  const [range, setRange] = useState(null);
 
   useEffect(() => {
-    api.get("/machines").then((m) => { if (Array.isArray(m)) setMachines(m); }).catch(() => {});
-  }, []);
+    let disposed = false;
+    let timer;
+    async function loadTrends() {
+      const end = new Date();
+      const start = new Date(end.getTime() - Number.parseInt(datePreset, 10) * 3600000);
+      const params = new URLSearchParams({ from: start.toISOString(), to: end.toISOString(), interval });
+      if (selectedMachine) params.set("machine_id", selectedMachine);
 
-  const [from_, setFrom] = useState("");
-  const [to, setTo] = useState("");
+      const [trendResult, paretoResult] = await Promise.allSettled([
+        api.getSilent(`/dashboard/trends/all?${params}`),
+        api.getSilent(`/dashboard/trends/pareto?${params}`),
+      ]);
+      if (disposed) return;
 
-  const applyPreset = (preset) => {
-    setDatePreset(preset);
-    const end = new Date();
-    const hours = {"1h":1,"4h":4,"8h":8,"24h":24}[preset] || 8;
-    const start = new Date(end.getTime() - hours * 3600000);
-    setFrom(start.toISOString());
-    setTo(end.toISOString());
-  };
+      const series = trendResult.status === "fulfilled" ? trendResult.value?.trends ?? [] : [];
+      setTrends(Object.fromEntries(series.map((trend) => [trend.series, trend])));
+      onTrendsLoaded(series.length > 0);
+      setParetoData(paretoResult.status === "fulfilled" ? paretoResult.value : null);
+      setRange({ start, end });
+      timer = setTimeout(loadTrends, 10000);
+    }
 
-  useEffect(() => { applyPreset("8h"); loadAllTrends(); }, []);
+    loadTrends();
+    return () => {
+      disposed = true;
+      clearTimeout(timer);
+    };
+  }, [datePreset, interval, selectedMachine, onTrendsLoaded]);
 
-  const loadAllTrends = () => {
-    const params = new URLSearchParams();
-    if (from_) params.set('from', from_);
-    if (to) params.set('to', to);
-    params.set('interval', interval);
-    if (selectedMachine) params.set('machine_id', selectedMachine);
-
-    api.getSilent(`/dashboard/trends/all?${params.toString()}`)
-      .then(data => {
-        for (const t of (data?.trends || [])) {
-          switch(t.series) {
-            case 'telemetry': setTelemetryData(t); break;
-            case 'order_progress': setOrderData(t); break;
-            case 'oee': setOeeData(t); break;
-            case 'downtime': setDowntimeData(t); break;
-            case 'quality': setQualityData(t); break;
-            case 'throughput': setThroughputData(t); break;
-            case 'machine_status': setMachineStatusData(t); break;
-          }
-        }
-        onTrendsLoaded(true);
-      }).catch(() => onTrendsLoaded(false));
-
-    api.getSilent(`/dashboard/trends/pareto?${params.toString()}`)
-      .then(setParetoData).catch(() => setParetoData(null));
-  };
-
-  useEffect(() => { loadAllTrends(); }, [from_, to, interval, selectedMachine]);
+  const {
+    telemetry: telemetryData, oee: oeeData, downtime: downtimeData,
+    quality: qualityData, throughput: throughputData, machine_status: machineStatusData,
+  } = trends;
+  const qualityTotals = qualityData?.points.reduce(
+    (total, point) => ({ good: total.good + point.good, bad: total.bad + point.bad }),
+    { good: 0, bad: 0 },
+  );
+  const liveInspection = selectedMachine && !machines.some((machine) => machine.id === selectedMachine && machine.resource_id === 3) ? null : inspection;
+  const sampleStations = machines.filter((machine) =>
+    (!selectedMachine || selectedMachine === machine.id) && stationSamples[machine.resource_id],
+  );
 
   const tabs = [
     { key: "telemetry", labelKey: "dashboard.telemetry" },
@@ -292,20 +297,20 @@ function TrendChartsSection({ onTrendsLoaded, trendsLoaded, t }) {
         <h3 className="text-sm font-semibold text-neutral-700 whitespace-nowrap">{t("dashboard.historicalTrends")}</h3>
         <div className="flex items-center gap-1 bg-neutral-100 rounded-lg p-0.5">
           {DATE_PRESETS.map(preset => (
-            <button key={preset.value} onClick={() => applyPreset(preset.value)} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${datePreset === preset.value ? 'bg-white text-neutral-900 shadow-sm' : 'text-neutral-500 hover:text-neutral-700'}`}>
+            <button key={preset.value} onClick={() => setDatePreset(preset.value)} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${datePreset === preset.value ? 'bg-white text-neutral-900 shadow-sm' : 'text-neutral-500 hover:text-neutral-700'}`}>
               {presetLabels[preset.labelKey] || preset.labelKey}
             </button>
           ))}
         </div>
-        <select value={selectedMachine} onChange={e => setSelectedMachine_(e.target.value)} className="text-xs border border-neutral-200 rounded-lg px-3 py-1.5 bg-white text-neutral-700 focus:ring-1 focus:ring-brand-primary">
+        {["telemetry", "quality", "machine_status"].includes(activeTab) && <select value={selectedMachine} onChange={e => setSelectedMachine_(e.target.value)} className="text-xs border border-neutral-200 rounded-lg px-3 py-1.5 bg-white text-neutral-700 focus:ring-1 focus:ring-brand-primary">
           <option value="">{t("dashboard.allMachines")}</option>
           {machines.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-        </select>
+        </select>}
         <select value={interval} onChange={e => setInterval_(e.target.value)} className="text-xs border border-neutral-200 rounded-lg px-3 py-1.5 bg-white text-neutral-700 focus:ring-1 focus:ring-brand-primary">
           {INTERVAL_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{intervalLabels[opt.labelKey] || opt.labelKey}</option>)}
         </select>
         <span className="ml-auto text-xs text-neutral-400">
-          {from_ && to ? new Date(from_).toLocaleTimeString("de-DE") + " — " + new Date(to).toLocaleTimeString("de-DE") : ""}
+          {range ? range.start.toLocaleTimeString() + " — " + range.end.toLocaleTimeString() : ""}
         </span>
       </div>
 
@@ -318,23 +323,54 @@ function TrendChartsSection({ onTrendsLoaded, trendsLoaded, t }) {
       </div>
 
       <div className="bg-white rounded-xl border border-neutral-200 p-5 shadow-sm min-h-[360px]">
+        {activeTab === "telemetry" && sampleStations.length > 0 && (
+          <div className="mb-4">
+            <h4 className="mb-2 text-sm font-semibold text-neutral-700">{t("dashboard.latestStationData")}</h4>
+            <ul className="space-y-2 text-sm text-neutral-700">
+              {sampleStations.map((machine) => {
+                const sample = stationSamples[machine.resource_id];
+                return (
+                  <li key={machine.id} className="flex flex-wrap gap-x-4 gap-y-1 rounded-lg bg-neutral-50 p-3">
+                    <strong>{machine.name}</strong>
+                    <span>{t("shopfloor.redBalls")} {sample.iPar2}</span>
+                    <span>{t("shopfloor.greenBalls")} {sample.iPar3}</span>
+                    <span>{t("shopfloor.blueBalls")} {sample.iPar4}</span>
+                    {sample.ldtTimeStamp && <span>{new Date(sample.ldtTimeStamp).toLocaleString()}</span>}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
         {activeTab === "telemetry" && (telemetryData?.points?.length > 0 ? (
-          <TrendChart data={telemetryData} xLabel={t("dashboard.from")} yLabel={t("dashboard.telemetry")} primaryColor="#6366f1" metricLabels={{ avg: t("dashboard.oee") + " Ø", min: t("dashboard.interval") + " Min", max: t("dashboard.interval") + " Max" }} stackedPoints />
+          <TrendChart data={telemetryData} xLabel={t("dashboard.from")} yLabel={t("dashboard.telemetry")} primaryColor="#a64b08" metricLabels={{ avg: t("dashboard.telemetry") + " Ø", min: t("dashboard.interval") + " Min", max: t("dashboard.interval") + " Max" }} stackedPoints />
         ) : <EmptyChart message={t("dashboard.noTelemetry")} />)}
 
+        {activeTab === "quality" && liveInspection && (
+          <div className="mb-4">
+            <h4 className="mb-2 text-sm font-semibold text-neutral-700">{t("dashboard.inspectionCounters")}</h4>
+            <div className="grid grid-cols-3 gap-4">
+              <TrendMiniCard label={t("dashboard.good")} value={liveInspection.good} color="emerald" />
+              <TrendMiniCard label={t("dashboard.bad")} value={liveInspection.bad} color="red" />
+              <TrendMiniCard label={t("dashboard.qualityYield")} value={liveInspection.good + liveInspection.bad > 0
+                ? formatPercent(Math.round(1000 * liveInspection.good / (liveInspection.good + liveInspection.bad)) / 10)
+                : "–"} color="indigo" />
+            </div>
+          </div>
+        )}
         {activeTab === "quality" && (qualityData?.points?.length > 0 ? (
           <>
             <div className="mb-4 grid grid-cols-3 gap-4">
-              <TrendMiniCard label={t("dashboard.good")} value={qualityData.points.reduce((s, p) => s + p.good, 0).toLocaleString()} color="emerald" />
-              <TrendMiniCard label={t("dashboard.bad")} value={qualityData.points.reduce((s, p) => s + p.bad, 0).toLocaleString()} color="red" />
-              <TrendMiniCard label={t("dashboard.avgYield")} value={formatRate(qualityData.points.length > 0 ? qualityData.points.reduce((s, p) => s + (p.yieldPct || 0), 0) / qualityData.points.length : 0) + "%"} color="indigo" />
+              <TrendMiniCard label={t("dashboard.good")} value={qualityTotals.good.toLocaleString()} color="emerald" />
+              <TrendMiniCard label={t("dashboard.bad")} value={qualityTotals.bad.toLocaleString()} color="red" />
+              <TrendMiniCard label={t("dashboard.avgYield")} value={formatPercent(Math.round(1000 * qualityTotals.good / (qualityTotals.good + qualityTotals.bad)) / 10)} color="indigo" />
             </div>
-            <TrendChart data={qualityData} xLabel={t("dashboard.from")} yLabel={t("dashboard.quality")} primaryColor="#10b981" showArea stackedPoints metricLabels={{ good: t("dashboard.good"), bad: t("dashboard.bad") }} />
+            <TrendChart data={qualityData} xLabel={t("dashboard.from")} yLabel={t("dashboard.quality")} primaryColor="#448361" showArea stackedPoints metricLabels={{ good: t("dashboard.good"), bad: t("dashboard.bad") }} />
           </>
         ) : <EmptyChart message={t("dashboard.noQuality")} />)}
 
         {activeTab === "throughput" && (throughputData?.points?.length > 0 ? (
-          <TrendChart data={throughputData} xLabel={t("dashboard.from")} yLabel={t("dashboard.completedQty")} primaryColor="#f59e0b" showArea stackedPoints metricLabels={{ completedQty: t("dashboard.completedQty") }} />
+          <TrendChart data={throughputData} xLabel={t("dashboard.from")} yLabel={t("dashboard.completedQty")} primaryColor="#bd8354" showArea stackedPoints metricLabels={{ completedQty: t("dashboard.completedQty") }} />
         ) : <EmptyChart message={t("dashboard.noThroughput")} />)}
 
         {activeTab === "oee" && (oeeData?.points?.length > 0 ? (
@@ -344,12 +380,12 @@ function TrendChartsSection({ onTrendsLoaded, trendsLoaded, t }) {
               <span className="flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-amber-500/80" /> {t("dashboard.performance")}</span>
               <span className="flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-sky-500/80" /> {t("dashboard.quality")}</span>
             </div>
-            <TrendChart data={oeeData} xLabel={t("dashboard.from")} yLabel="OEE %" primaryColor="#6366f1" stackedPoints metricLabels={{ availability: t("dashboard.availability"), quality: t("dashboard.quality") }} showArea={false} />
+            <TrendChart data={oeeData} xLabel={t("dashboard.from")} yLabel="OEE %" primaryColor="#a64b08" stackedPoints metricLabels={{ availability: t("dashboard.availability"), performance: t("dashboard.performance"), quality: t("dashboard.quality") }} showArea={false} valueScale={100} />
           </>
         ) : <EmptyChart message={t("dashboard.noOee")} />)}
 
         {activeTab === "downtime" && (downtimeData?.points?.length > 0 ? (
-          <TrendBarChart data={downtimeData} xLabel={t("dashboard.from")} yLabel={t("dashboard.minutes")} primaryColor="#ef4444" showArea stackedPoints metricLabels={{ minutes: `${t("dashboard.downtime")} (${t("dashboard.reportMinute")})`, eventCount: t("dashboard.events") }} />
+          <TrendBarChart data={downtimeData} xLabel={t("dashboard.from")} yLabel={t("dashboard.minutes")} primaryColor="#b64d4d" showArea stackedPoints metricLabels={{ minutes: `${t("dashboard.downtime")} (${t("dashboard.reportMinute")})`, eventCount: t("dashboard.events") }} />
         ) : <EmptyChart message={t("dashboard.noDowntime")} />)}
 
         {activeTab === "pareto" && (paretoData?.data?.length > 0 ? (
@@ -363,7 +399,7 @@ function TrendChartsSection({ onTrendsLoaded, trendsLoaded, t }) {
               <span className="flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-lime-500/80" /> {t("dashboard.idle")}</span>
               <span className="flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-red-500/80" /> {t("dashboard.error")}</span>
             </div>
-            <TrendChart data={machineStatusData} xLabel={t("dashboard.from")} yLabel={t("dashboard.stationCount")} primaryColor="#6366f1" stackedPoints metricLabels={{ online: t("dashboard.online"), idle: t("dashboard.idle"), error: t("dashboard.error"), offline: t("dashboard.offline"), maintenance: t("dashboard.maintenance") }} showArea={false} />
+            <TrendChart data={machineStatusData} xLabel={t("dashboard.from")} yLabel={t("dashboard.stationCount")} primaryColor="#a64b08" stackedPoints metricLabels={{ online: t("dashboard.online"), idle: t("dashboard.idle"), error: t("dashboard.error"), offline: t("dashboard.offline"), maintenance: t("dashboard.maintenance") }} showArea={false} />
           </>
         ) : <EmptyChart message={t("dashboard.noMachineStatus")} />)}
       </div>
@@ -371,25 +407,25 @@ function TrendChartsSection({ onTrendsLoaded, trendsLoaded, t }) {
   );
 }
 
-function TrendChart({ data, xLabel, yLabel, primaryColor, showArea = true, stackedPoints = false, metricLabels }) {
+function TrendChart({ data, xLabel, yLabel, primaryColor, showArea = true, stackedPoints = false, metricLabels, valueScale = 1 }) {
   if (!data?.points?.length) return null;
   const labels = data.points.map(p => new Date(p.timestamp).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }));
 
   const datasets = stackedPoints && metricLabels
     ? Object.keys(metricLabels).map((key, i) => ({
         label: metricLabels[key],
-        data: data.points.map(p => p[key] ?? 0),
-        borderColor: ['#6366f1', '#ef4444', '#10b981', '#f59e0b', '#0ea5e9'][i % 5],
-        backgroundColor: showArea ? ['#6366f122', '#ef444422', '#10b98122', '#f59e0b22', '#0ea5e922'][i % 5] : undefined,
+        data: data.points.map(p => p[key] == null ? null : p[key] * valueScale),
+        borderColor: ['#a64b08', '#b64d4d', '#448361', '#bd8354', '#767178'][i % 5],
+        backgroundColor: showArea ? ['#a64b0822', '#b64d4d22', '#44836122', '#bd835422', '#76717822'][i % 5] : undefined,
         fill: showArea && i === 0 ? true : false,
-        tension: 0.3, pointRadius: 0, pointHoverRadius: 4,
+        tension: 0.3, pointRadius: data.points.length <= 12 ? 3 : 0, pointHoverRadius: 4,
       }))
     : [{
         label: metricLabels ? Object.values(metricLabels)[0] || yLabel : yLabel,
         data: data.points.map(p => p.avg ?? p.completedQty ?? p.good ?? p.quantity ?? 0),
         borderColor: primaryColor,
         backgroundColor: showArea ? primaryColor + "33" : undefined,
-        fill: showArea, tension: 0.3, pointRadius: 0, pointHoverRadius: 4,
+        fill: showArea, tension: 0.3, pointRadius: data.points.length <= 12 ? 3 : 0, pointHoverRadius: 4,
       }];
 
   return (
@@ -399,13 +435,13 @@ function TrendChart({ data, xLabel, yLabel, primaryColor, showArea = true, stack
         interaction: { mode: "index", intersect: false },
         plugins: {
           legend: { display: stackedPoints, position: "top", labels: { boxWidth: 12, padding: 16, font: { size: 11 } } },
-          tooltip: { backgroundColor: "#1e293b", titleFont: { size: 12 }, bodyFont: { size: 11 }, padding: 10, cornerRadius: 8, displayColors: true, boxWidth: 8, boxHeight: 8,
+          tooltip: { backgroundColor: "#27272a", titleFont: { size: 12 }, bodyFont: { size: 11 }, padding: 10, cornerRadius: 8, displayColors: true, boxWidth: 8, boxHeight: 8,
             callbacks: { title: (items) => items[0]?.label || "", label: (ctx) => ` ${ctx.dataset.label}: ${ctx.parsed.y?.toFixed(2) ?? ctx.parsed.y}` },
           },
         },
         scales: {
-          x: { grid: { display: false }, ticks: { font: { size: 10 }, color: "#94a3b8", maxTicksLimit: 12, maxRotation: 0 } },
-          y: { grid: { color: "#f1f5f9" }, ticks: { font: { size: 10 }, color: "#94a3b8" }, beginAtZero: true },
+          x: { grid: { display: false }, ticks: { font: { size: 10 }, color: "#85858c", maxTicksLimit: 12, maxRotation: 0 } },
+          y: { grid: { color: "#c4c4ca55" }, ticks: { font: { size: 10 }, color: "#85858c" }, beginAtZero: true },
         },
       }} />
     </div>
@@ -426,7 +462,7 @@ function TrendBarChart({ data, xLabel, yLabel, primaryColor, showArea = true, st
     datasets.push({
       label: metricLabels?.eventCount || "Events",
       data: data.points.map(p => p.eventCount ?? 0),
-      backgroundColor: "#6366f144", borderColor: "#6366f1", borderWidth: 1, borderRadius: 2,
+      backgroundColor: "#a64b0844", borderColor: "#a64b08", borderWidth: 1, borderRadius: 2,
     });
   }
 
@@ -436,11 +472,11 @@ function TrendBarChart({ data, xLabel, yLabel, primaryColor, showArea = true, st
         responsive: true, maintainAspectRatio: false, resizeDelay: 100, animation: { duration: 600 },
         plugins: {
           legend: { display: true, position: "top", labels: { boxWidth: 12, padding: 16, font: { size: 11 } } },
-          tooltip: { backgroundColor: "#1e293b", titleFont: { size: 12 }, bodyFont: { size: 11 }, padding: 10, cornerRadius: 8, displayColors: true },
+          tooltip: { backgroundColor: "#27272a", titleFont: { size: 12 }, bodyFont: { size: 11 }, padding: 10, cornerRadius: 8, displayColors: true },
         },
         scales: {
-          x: { grid: { display: false }, ticks: { font: { size: 10 }, color: "#94a3b8", maxTicksLimit: 12, maxRotation: 0 } },
-          y: { grid: { color: "#f1f5f9" }, ticks: { font: { size: 10 }, color: "#94a3b8" }, beginAtZero: true },
+          x: { grid: { display: false }, ticks: { font: { size: 10 }, color: "#85858c", maxTicksLimit: 12, maxRotation: 0 } },
+          y: { grid: { color: "#c4c4ca55" }, ticks: { font: { size: 10 }, color: "#85858c" }, beginAtZero: true },
         },
       }} />
     </div>
@@ -458,19 +494,19 @@ function ParetoBarChart({ data, t }) {
       <Bar data={{
         labels: rows.map((row) => row.machine_name || t("common.unknown")),
         datasets: [
-          { label: `${t("dashboard.downtime")} (${t("dashboard.reportMinute")})`, data: rows.map((row) => row.downtime_minutes || 0), backgroundColor: "#ef444466", borderColor: "#ef4444", borderWidth: 1, borderRadius: 3, yAxisID: "y" },
-          { label: t("dashboard.pareto"), data: cumulativePct, backgroundColor: "#6366f166", borderColor: "#6366f1", borderWidth: 1, borderRadius: 3, yAxisID: "y1" },
+          { label: `${t("dashboard.downtime")} (${t("dashboard.reportMinute")})`, data: rows.map((row) => row.downtime_minutes || 0), backgroundColor: "#b64d4d66", borderColor: "#b64d4d", borderWidth: 1, borderRadius: 3, yAxisID: "y" },
+          { label: t("dashboard.pareto"), data: cumulativePct, backgroundColor: "#a64b0866", borderColor: "#a64b08", borderWidth: 1, borderRadius: 3, yAxisID: "y1" },
         ],
       }} options={{
         responsive: true, maintainAspectRatio: false, resizeDelay: 100, animation: { duration: 600 },
         plugins: {
           legend: { display: true, position: "top", labels: { boxWidth: 12, padding: 16, font: { size: 11 } } },
-          tooltip: { backgroundColor: "#1e293b", titleFont: { size: 12 }, bodyFont: { size: 11 }, padding: 10, cornerRadius: 8 },
+          tooltip: { backgroundColor: "#27272a", titleFont: { size: 12 }, bodyFont: { size: 11 }, padding: 10, cornerRadius: 8 },
         },
         scales: {
-          x: { grid: { display: false }, ticks: { font: { size: 10 }, color: "#94a3b8", maxRotation: 0 } },
-          y: { grid: { color: "#f1f5f9" }, ticks: { font: { size: 10 }, color: "#94a3b8" }, beginAtZero: true, position: "left" },
-          y1: { grid: { drawOnChartArea: false }, ticks: { font: { size: 10 }, color: "#6366f1", callback: (value) => `${value}%` }, beginAtZero: true, max: 100, position: "right" },
+          x: { grid: { display: false }, ticks: { font: { size: 10 }, color: "#85858c", maxRotation: 0 } },
+          y: { grid: { color: "#c4c4ca55" }, ticks: { font: { size: 10 }, color: "#85858c" }, beginAtZero: true, position: "left" },
+          y1: { grid: { drawOnChartArea: false }, ticks: { font: { size: 10 }, color: "#a64b08", callback: (value) => `${value}%` }, beginAtZero: true, max: 100, position: "right" },
         },
       }} />
     </div>

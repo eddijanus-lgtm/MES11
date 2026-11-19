@@ -154,9 +154,9 @@ export class DashboardService {
     }
   }
 
-  async getDashboardTrends(from?: string, to?: string, interval?: string) {
+  async getDashboardTrends(from?: string, to?: string, interval?: string, machineId?: string) {
     const range = this.resolveRange(from, to);
-    const result = await this.getAllTrends(range.start.toISOString(), range.end.toISOString(), interval || this.intervalToTimescale(this.calculateTrendInterval(range.start, range.end)));
+    const result = await this.getAllTrends(range.start.toISOString(), range.end.toISOString(), interval || this.intervalToTimescale(this.calculateTrendInterval(range.start, range.end)), machineId);
 
     return {
       from: range.start.toISOString(),
@@ -221,23 +221,21 @@ export class DashboardService {
 
   async getTelemetryTrend(from?: string, to?: string, interval?: string, nodeId?: string, machineId?: string) {
     const range = this.resolveRange(from, to);
-    const chunkSize = interval || '1 min';
+    const chunkSize = this.trendInterval(interval, '1 min');
 
-    let whereClause = 'dp.timestamp BETWEEN :start AND :end';
-    const params: Record<string, any> = { start: range.start, end: range.end };
+    let whereClause = 'dp.timestamp BETWEEN $1 AND $2';
+    const params: Array<Date | string> = [range.start, range.end, chunkSize];
 
     if (nodeId) {
-      whereClause += ' AND dp.node_id = :node_id';
-      params.node_id = nodeId;
+      whereClause += ' AND dp.node_id = $' + params.push(nodeId);
     }
     if (machineId) {
-      whereClause += ' AND dp.machine_id = :machine_id';
-      params.machine_id = machineId;
+      whereClause += ' AND dp.machine_id = $' + params.push(machineId);
     }
 
     const query = `
       SELECT
-        EXTRACT(EPOCH FROM time_bucket(${this.quoteLiteral(chunkSize)}, dp.timestamp))::bigint * 1000 AS ts,
+        EXTRACT(EPOCH FROM date_bin($3::interval, dp.timestamp, TIMESTAMP '1970-01-01'))::bigint * 1000 AS ts,
         AVG(dp.value) AS avg_value,
         MIN(dp.value) AS min_value,
         MAX(dp.value) AS max_value,
@@ -271,22 +269,25 @@ export class DashboardService {
 
   async getOrderProgressTrend(from?: string, to?: string, interval?: string) {
     const range = this.resolveRange(from, to);
-    const chunkSize = interval || '5 min';
+    const chunkSize = this.trendInterval(interval, '5 min');
 
     const query = `
       SELECT
-        EXTRACT(EPOCH FROM time_bucket(${this.quoteLiteral(chunkSize)}, o.created_at))::bigint * 1000 AS ts,
+        EXTRACT(EPOCH FROM date_bin($3::interval, o.created_at, TIMESTAMP '1970-01-01'))::bigint * 1000 AS ts,
         COUNT(*) AS order_count,
         COALESCE(SUM(o.quantity), 0) AS target_qty,
         COALESCE(SUM(o.completed_quantity), 0) AS completed_qty
       FROM orders o
-      WHERE o.created_at BETWEEN :start AND :end
+      WHERE o.created_at BETWEEN $1 AND $2
       GROUP BY ts
       ORDER BY ts ASC
     `;
 
     const rows = await this.safeQuery(
-      this.ordersRepo.query(query, { start: range.start, end: range.end }),
+      this.ordersRepo.query<Array<{ ts: string; order_count: string; target_qty: string; completed_qty: string }>>(
+        query,
+        [range.start, range.end, chunkSize],
+      ),
       [],
     );
 
@@ -294,7 +295,7 @@ export class DashboardService {
       series: 'order_progress',
       interval: chunkSize,
       range: { from: range.start.toISOString(), to: range.end.toISOString() },
-      points: rows.map((r: any) => ({
+      points: rows.map((r) => ({
         timestamp: Number(r.ts),
         orderCount: parseInt(r.order_count, 10) ?? 0,
         targetQty: parseFloat(r.target_qty) ?? 0,
@@ -305,32 +306,33 @@ export class DashboardService {
 
   async getOeeTrend(from?: string, to?: string, interval?: string) {
     const range = this.resolveRange(from, to);
-    const chunkSize = interval || '15 min';
+    const chunkSize = this.trendInterval(interval, '15 min');
 
     const downtimeQuery = `
       SELECT
-        EXTRACT(EPOCH FROM time_bucket(${this.quoteLiteral(chunkSize)}, downtime.start_time))::bigint * 1000 AS ts,
-        COALESCE(SUM(EXTRACT(EPOCH FROM (LEAST(COALESCE(downtime.end_time, :end), :end) - GREATEST(downtime.start_time, :start)))), 0) / 60.0 AS minutes
+        EXTRACT(EPOCH FROM date_bin($3::interval, downtime.start_time, TIMESTAMP '1970-01-01'))::bigint * 1000 AS ts,
+        COALESCE(SUM(EXTRACT(EPOCH FROM (LEAST(COALESCE(downtime.end_time, $2), $2) - GREATEST(downtime.start_time, $1)))), 0) / 60.0 AS minutes
       FROM downtime_logs downtime
-      WHERE downtime.start_time BETWEEN :start AND :end
+      WHERE downtime.start_time BETWEEN $1 AND $2
       GROUP BY ts
       ORDER BY ts ASC
     `;
 
     const qualityQuery = `
       SELECT
-        EXTRACT(EPOCH FROM time_bucket(${this.quoteLiteral(chunkSize)}, dp.timestamp))::bigint * 1000 AS ts,
+        EXTRACT(EPOCH FROM date_bin($3::interval, dp.timestamp, TIMESTAMP '1970-01-01'))::bigint * 1000 AS ts,
         COUNT(CASE WHEN dp.quality = 'good' THEN 1 END) AS good,
         COUNT(CASE WHEN dp.quality = 'bad' THEN 1 END) AS bad
       FROM data_points dp
-      WHERE dp.timestamp BETWEEN :start AND :end
+      WHERE dp.timestamp BETWEEN $1 AND $2
       GROUP BY ts
       ORDER BY ts ASC
     `;
 
-const [downtimeRows, qualityRows] = await Promise.all([
-      this.safeQuery(this.downtimeRepo.query(downtimeQuery, { start: range.start, end: range.end }), []),
-      this.safeQuery(this.dataPointRepo.query(qualityQuery, { start: range.start, end: range.end }), []),
+    const [downtimeRows, qualityRows, orders] = await Promise.all([
+      this.safeQuery(this.downtimeRepo.query(downtimeQuery, [range.start, range.end, chunkSize]), []),
+      this.safeQuery(this.dataPointRepo.query(qualityQuery, [range.start, range.end, chunkSize]), []),
+      this.getOrderProgressTrend(range.start.toISOString(), range.end.toISOString(), chunkSize),
     ]);
 
     const downtimeMap = new Map<number, number>();
@@ -339,22 +341,22 @@ const [downtimeRows, qualityRows] = await Promise.all([
     const qualityMap = new Map<number, { good: number; bad: number }>();
     for (const r of qualityRows as any[]) qualityMap.set(Number(r.ts), { good: parseInt(r.good, 10) ?? 0, bad: parseInt(r.bad, 10) ?? 0 });
 
-    const allTimestamps = new Set([...downtimeMap.keys(), ...qualityMap.keys()]);
-    const oeePoints: Array<{ timestamp: number; availability: number; quality: number; performance: number }> = [];
+    const orderMap = new Map(orders.points.map((point) => [point.timestamp, point]));
+    const allTimestamps = new Set([...downtimeMap.keys(), ...qualityMap.keys(), ...orderMap.keys()]);
+    const oeePoints: Array<{ timestamp: number; availability: number | null; quality: number | null; performance: number | null }> = [];
     const machineCount = await this.machinesRepo.count();
-    const plannedMinutesPerInterval = (parseInt(chunkSize.match(/\d+/)?.[0] || '15', 10) || 15) * machineCount;
+    const plannedMinutesPerInterval = this.intervalMinutes[chunkSize] * machineCount;
 
     for (const ts of Array.from(allTimestamps).sort((a, b) => a - b)) {
       const dm = downtimeMap.get(ts) ?? 0;
       const qm = qualityMap.get(ts) ?? { good: 0, bad: 0 };
-      const avail = plannedMinutesPerInterval > 0 ? Math.max(0, (plannedMinutesPerInterval - dm) / plannedMinutesPerInterval) : 1;
+      const order = orderMap.get(ts);
       const measured = qm.good + qm.bad;
-      const qual = measured > 0 ? qm.good / measured : 1;
       oeePoints.push({
         timestamp: ts,
-        availability: Math.round(avail * 1000) / 1000,
-        quality: Math.round(qual * 1000) / 1000,
-        performance: 1.0,
+        availability: plannedMinutesPerInterval > 0 ? this.round(Math.max(0, 1 - dm / plannedMinutesPerInterval), 3) : null,
+        quality: measured > 0 ? this.round(qm.good / measured, 3) : null,
+        performance: order && order.targetQty > 0 ? this.round(Math.min(order.completedQty / order.targetQty, 1), 3) : null,
       });
     }
 
@@ -363,21 +365,21 @@ const [downtimeRows, qualityRows] = await Promise.all([
 
   async getDowntimeTrend(from?: string, to?: string, interval?: string) {
     const range = this.resolveRange(from, to);
-    const chunkSize = interval || '5 min';
+    const chunkSize = this.trendInterval(interval, '5 min');
 
     const query = `
       SELECT
-        EXTRACT(EPOCH FROM time_bucket(${this.quoteLiteral(chunkSize)}, downtime.start_time))::bigint * 1000 AS ts,
-        COALESCE(SUM(EXTRACT(EPOCH FROM (LEAST(COALESCE(downtime.end_time, :end), :end) - GREATEST(downtime.start_time, :start)))), 0) / 60.0 AS minutes,
+        EXTRACT(EPOCH FROM date_bin($3::interval, downtime.start_time, TIMESTAMP '1970-01-01'))::bigint * 1000 AS ts,
+        COALESCE(SUM(EXTRACT(EPOCH FROM (LEAST(COALESCE(downtime.end_time, $2), $2) - GREATEST(downtime.start_time, $1)))), 0) / 60.0 AS minutes,
         COUNT(*) AS event_count
       FROM downtime_logs downtime
-      WHERE downtime.start_time BETWEEN :start AND :end
+      WHERE downtime.start_time BETWEEN $1 AND $2
       GROUP BY ts
       ORDER BY ts ASC
     `;
 
     const rows = await this.safeQuery(
-      this.downtimeRepo.query(query, { start: range.start, end: range.end }),
+      this.downtimeRepo.query(query, [range.start, range.end, chunkSize]),
       [],
     );
 
@@ -393,24 +395,25 @@ const [downtimeRows, qualityRows] = await Promise.all([
     };
   }
 
-  async getQualityTrend(from?: string, to?: string, interval?: string) {
+  async getQualityTrend(from?: string, to?: string, interval?: string, machineId?: string) {
     const range = this.resolveRange(from, to);
-    const chunkSize = interval || '5 min';
+    const chunkSize = this.trendInterval(interval, '5 min');
 
     const query = `
       SELECT
-        EXTRACT(EPOCH FROM time_bucket(${this.quoteLiteral(chunkSize)}, dp.timestamp))::bigint * 1000 AS ts,
+        EXTRACT(EPOCH FROM date_bin($3::interval, dp.timestamp, TIMESTAMP '1970-01-01'))::bigint * 1000 AS ts,
         COUNT(CASE WHEN dp.quality = 'good' THEN 1 END) AS good,
         COUNT(CASE WHEN dp.quality = 'bad' THEN 1 END) AS bad,
         COUNT(*) AS total
       FROM data_points dp
-      WHERE dp.timestamp BETWEEN :start AND :end
+      WHERE dp.timestamp BETWEEN $1 AND $2 AND dp.quality IN ('good', 'bad')
+        AND ($4::text IS NULL OR dp.machine_id = $4)
       GROUP BY ts
       ORDER BY ts ASC
     `;
 
     const rows = await this.safeQuery(
-      this.dataPointRepo.query(query, { start: range.start, end: range.end }),
+      this.dataPointRepo.query(query, [range.start, range.end, chunkSize, machineId ?? null]),
       [],
     );
 
@@ -434,20 +437,20 @@ const [downtimeRows, qualityRows] = await Promise.all([
 
   async getThroughputTrend(from?: string, to?: string, interval?: string) {
     const range = this.resolveRange(from, to);
-    const chunkSize = interval || '5 min';
+    const chunkSize = this.trendInterval(interval, '5 min');
 
     const query = `
       SELECT
-        EXTRACT(EPOCH FROM time_bucket(${this.quoteLiteral(chunkSize)}, o.created_at))::bigint * 1000 AS ts,
+        EXTRACT(EPOCH FROM date_bin($3::interval, o.end_time, TIMESTAMP '1970-01-01'))::bigint * 1000 AS ts,
         COALESCE(SUM(o.completed_quantity), 0) AS completed_qty
       FROM orders o
-      WHERE o.created_at BETWEEN :start AND :end
+      WHERE o.end_time BETWEEN $1 AND $2 AND o.status = 'completed'
       GROUP BY ts
       ORDER BY ts ASC
     `;
 
     const rows = await this.safeQuery(
-      this.ordersRepo.query(query, { start: range.start, end: range.end }),
+      this.ordersRepo.query(query, [range.start, range.end, chunkSize]),
       [],
     );
 
@@ -464,19 +467,18 @@ const [downtimeRows, qualityRows] = await Promise.all([
 
   async getMachineStatusTrend(from?: string, to?: string, interval?: string, machineId?: string) {
     const range = this.resolveRange(from, to);
-    const chunkSize = interval || '1 min';
+    const chunkSize = this.trendInterval(interval, '1 min');
 
-    let whereClause = 'm.updated_at BETWEEN :start AND :end';
-    const params: Record<string, any> = { start: range.start, end: range.end };
+    let whereClause = 'm.updated_at BETWEEN $1 AND $2';
+    const params: Array<Date | string> = [range.start, range.end, chunkSize];
 
     if (machineId) {
-      whereClause += ' AND m.id = :machine_id';
-      params.machine_id = machineId;
+      whereClause += ' AND m.id = $' + params.push(machineId);
     }
 
     const query = `
       SELECT
-        EXTRACT(EPOCH FROM time_bucket(${this.quoteLiteral(chunkSize)}, m.updated_at))::bigint * 1000 AS ts,
+        EXTRACT(EPOCH FROM date_bin($3::interval, m.updated_at, TIMESTAMP '1970-01-01'))::bigint * 1000 AS ts,
         m.status,
         COUNT(*) AS cnt
       FROM machines m
@@ -509,24 +511,24 @@ const [downtimeRows, qualityRows] = await Promise.all([
 
   async getDeliveryProgressTrend(from?: string, to?: string, interval?: string) {
     const range = this.resolveRange(from, to);
-    const chunkSize = interval || '5 min';
+    const chunkSize = this.trendInterval(interval, '5 min');
 
     const query = `
       SELECT
         m.name AS machine_name,
         m.id AS machine_id,
-        EXTRACT(EPOCH FROM time_bucket(${this.quoteLiteral(chunkSize)}, o.created_at))::bigint * 1000 AS ts,
+        EXTRACT(EPOCH FROM date_bin($3::interval, o.created_at, TIMESTAMP '1970-01-01'))::bigint * 1000 AS ts,
         COALESCE(SUM(o.quantity), 0) AS target_qty,
         COALESCE(SUM(o.completed_quantity), 0) AS completed_qty
       FROM orders o
-      JOIN machines m ON m.id = o.machine_id
-      WHERE o.created_at BETWEEN :start AND :end
+      JOIN machines m ON m.id::text = o.machine_id
+      WHERE o.created_at BETWEEN $1 AND $2
       GROUP BY ts, m.name, m.id
       ORDER BY ts ASC
     `;
 
     const rows = await this.safeQuery(
-      this.ordersRepo.query(query, { start: range.start, end: range.end }),
+      this.ordersRepo.query(query, [range.start, range.end, chunkSize]),
       [],
     );
 
@@ -550,7 +552,7 @@ const [downtimeRows, qualityRows] = await Promise.all([
       SELECT m.id AS machine_id, m.name AS machine_name,
         COALESCE(SUM(o.quantity), 0) AS total_target,
         COALESCE(SUM(o.completed_quantity), 0) AS total_completed
-      FROM orders o JOIN machines m ON m.id = o.machine_id
+      FROM orders o JOIN machines m ON m.id::text = o.machine_id
     `;
 
     const params: any[] = [];
@@ -577,15 +579,15 @@ const [downtimeRows, qualityRows] = await Promise.all([
     }))};
   }
 
-  async getAllTrends(from?: string, to?: string, interval?: string) {
+  async getAllTrends(from?: string, to?: string, interval?: string, machineId?: string) {
     const results = await Promise.allSettled([
-      this.getTelemetryTrend(from, to, interval),
+      this.getTelemetryTrend(from, to, interval, undefined, machineId),
       this.getOrderProgressTrend(from, to, interval),
       this.getOeeTrend(from, to, interval),
       this.getDowntimeTrend(from, to, interval),
-      this.getQualityTrend(from, to, interval),
+      this.getQualityTrend(from, to, interval, machineId),
       this.getThroughputTrend(from, to, interval),
-      this.getMachineStatusTrend(from, to, interval),
+      this.getMachineStatusTrend(from, to, interval, machineId),
       this.getDeliveryProgressTrend(from, to, interval),
     ]);
 
@@ -597,7 +599,9 @@ const [downtimeRows, qualityRows] = await Promise.all([
     return { range: { from, to }, trends };
   }
 
-  private quoteLiteral(value: string): string {
-    return "'" + value.replace(/'/g, "''") + "'";
+  private readonly intervalMinutes = { '1 min': 1, '5 min': 5, '15 min': 15, '1 hour': 60, '1 day': 1440 };
+
+  private trendInterval(interval: string | undefined, fallback: string) {
+    return interval && Object.hasOwn(this.intervalMinutes, interval) ? interval : fallback;
   }
 }

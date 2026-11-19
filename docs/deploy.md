@@ -1,5 +1,7 @@
 # Deploy-Anleitung
 
+Für den ersten Rollout auf den Schulserver siehe [CI/CD und Schulserver-Rollout](ci-cd-schulserver.md).
+
 ## Production-Deployment mit pm2
 
 ### pm2 Cluster-Mode (horizontal scaling)
@@ -95,6 +97,14 @@ server {
 | `NODE_ENV` | Environment | `production` |
 | `MQTT_BROKER_URL` | MQTT Broker | `mqtt://internal.corp:1883` |
 | `OPCUA_ENDPOINT_URL` | OPC UA Server | `opc.tcp://plc.internal:4840` |
+
+### Demo-Webshop auf demselben Server
+
+Der vorhandene Frontend-Build enthält den Shop unter `/webshop`. Das MES liefert ihn über dieselbe Adresse und denselben HTTP-Port wie die übrige Oberfläche aus. Admins und Bediener öffnen ihn über den Menüpunkt **Webshop**.
+
+Falls auf dem Server noch kein Broker läuft und das MES-Backend direkt auf dem Host gestartet wird, startet `docker compose up -d mqtt` den optionalen lokalen Broker. Setze dafür in der Backend-`.env` die Werte `MQTT_BROKER_URL=mqtt://127.0.0.1:1883` und `WEBSHOP_MQTT_TOPIC=i4.0/production/orders`. Der Demo-Broker ist auf dem Host nur über Loopback erreichbar. Ist bereits ein Broker vorhanden, kann das Backend dessen Adresse verwenden.
+
+Beim Checkout veröffentlicht das Backend genau eine konfigurierte Box als JSON auf dem Bestell-Topic. Die Bestätigung im Shop bezieht sich auf die Annahme durch den Broker. Den angelegten Produktionsauftrag findest du anschließend im Shopfloor Gateway unter **Webshop-Bestellungen**, sofern die MES-Demostammdaten eingerichtet sind. Beim vorhandenen Demo-Routing sollte die laufende Box fertig sein, bevor du die nächste bestellst.
 
 ## TimescaleDB Setup
 

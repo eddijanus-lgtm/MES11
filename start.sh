@@ -13,7 +13,7 @@ if pgrep -f "opcua-test-server.js" > /dev/null; then
   echo "[OK] OPC UA-Testserver lauscht bereits."
 else
   echo "[*] Starte OPC UA-Testserver …"
-  nohup npm run start:opcua-test > >(tee /tmp/wara-mes-opcua.log) 2>&1 &
+  nohup npm run start:machine-simulator > >(tee /tmp/wara-mes-opcua.log) 2>&1 &
   sleep 3
   if pgrep -f "opcua-test-server.js" > /dev/null; then
     echo "[OK] OPC UA-Testserver läuft."
