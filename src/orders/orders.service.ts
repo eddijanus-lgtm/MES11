@@ -39,13 +39,16 @@ export class OrdersService {
       start_time: dto.start_time ?? new Date(),
       target_complete_time: dto.target_complete_time,
       completed_quantity: 0,
+      red_balls: dto.red_balls ?? 0,
+      green_balls: dto.green_balls ?? 0,
+      blue_balls: dto.blue_balls ?? 0,
     });
     const savedOrder = await this.ordersRepo.save(order);
 
     const routeStepsData = [
-      { step_no: 1, resource_id: 1, operation_no: 10, operation: 'Deckelfarbe bereitstellen', parameters: { iPar1: 1, iPar2: 3, iPar3: 5, iPar4: 7 } },
-      { step_no: 2, resource_id: 2, operation_no: 20, operation: 'Kugeln dosieren', parameters: { iPar1: 1, iPar2: 3, iPar3: 5, iPar4: 7 } },
-      { step_no: 3, resource_id: 3, operation_no: 30, operation: 'Deckel und Kugeln pruefen', parameters: { iPar1: 1, iPar2: 3, iPar3: 5, iPar4: 7 } },
+      { step_no: 1, resource_id: 1, operation_no: 10, operation: 'Deckelfarbe bereitstellen', parameters: { iPar1: 1, iPar2: dto.red_balls ?? 0, iPar3: dto.green_balls ?? 0, iPar4: dto.blue_balls ?? 0 } },
+      { step_no: 2, resource_id: 2, operation_no: 20, operation: 'Kugeln dosieren', parameters: { iPar1: 1, iPar2: dto.red_balls ?? 0, iPar3: dto.green_balls ?? 0, iPar4: dto.blue_balls ?? 0 } },
+      { step_no: 3, resource_id: 3, operation_no: 30, operation: 'Deckel und Kugeln pruefen', parameters: { iPar1: 1, iPar2: dto.red_balls ?? 0, iPar3: dto.green_balls ?? 0, iPar4: dto.blue_balls ?? 0 } },
     ];
     const route = await this.routeStepsRepo.save(
       routeStepsData.map(step => this.routeStepsRepo.create({ ...step, order_id: savedOrder.id })),
@@ -83,7 +86,14 @@ export class OrdersService {
     }
     if (dto.status === 'completed' || dto.status === 'cancelled') order.end_time = new Date();
     Object.assign(order, dto);
-    return this.ordersRepo.save(order);
+    const saved = await this.ordersRepo.save(order);
+    if (dto.red_balls !== undefined || dto.green_balls !== undefined || dto.blue_balls !== undefined) {
+      const steps = await this.routeStepsRepo.find({ where: { order_id: id } });
+      await this.routeStepsRepo.save(steps.map((step) => ({ ...step, parameters: {
+        ...(step.parameters || {}), iPar2: saved.red_balls, iPar3: saved.green_balls, iPar4: saved.blue_balls,
+      } })));
+    }
+    return saved;
   }
 
   async remove(id: string): Promise<void> {

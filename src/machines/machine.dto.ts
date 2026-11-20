@@ -1,5 +1,5 @@
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsInt, IsNotEmpty, IsString, IsEnum, IsOptional, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsNotEmpty, IsString, IsEnum, IsOptional, IsUUID, Min, Max } from 'class-validator';
 import { MachineStatusEnum } from './machine.entity';
 
 export type MachineStatus = 'online' | 'offline' | 'maintenance' | 'error' | 'idle';
@@ -30,6 +30,28 @@ export class CreateMachineDto {
   @IsOptional()
   @IsString()
   serial_number?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  is_machine?: boolean;
+
+  @IsOptional()
+  @IsUUID()
+  parent_machine_id?: string;
+
+  @IsOptional()
+  @IsString()
+  ip_address?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(65535)
+  connection_port?: number;
+
+  @IsOptional()
+  @IsString()
+  connection_protocol?: string;
 
   @IsOptional()
   @IsInt()
@@ -74,6 +96,28 @@ export class UpdateMachineDto {
   @IsOptional()
   @IsString()
   serial_number?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  is_machine?: boolean;
+
+  @IsOptional()
+  @IsUUID()
+  parent_machine_id?: string;
+
+  @IsOptional()
+  @IsString()
+  ip_address?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(65535)
+  connection_port?: number;
+
+  @IsOptional()
+  @IsString()
+  connection_protocol?: string;
 
   @IsOptional()
   @IsInt()

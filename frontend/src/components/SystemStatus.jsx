@@ -1,14 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from "../i18n/I18nProvider.jsx";
+import { useAuth } from "../providers/AuthProvider.jsx";
 
 export default function SystemStatus() {
   const { t } = useTranslation();
+  const { token } = useAuth();
   const [backendOnline, setBackendOnline] = useState('checking');
   const [dbOnline, setDbOnline] = useState('checking');
-  const [token, setToken] = useState(false);
 
   useEffect(() => {
-    setToken(Boolean(localStorage.getItem('jwt_token')));
     const check = () => {
       fetch('/api/health').then(res => res.json()).then(health => {
         setBackendOnline(health.status === 'ok' ? 'online' : 'error');

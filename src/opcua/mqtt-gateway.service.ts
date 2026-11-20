@@ -34,6 +34,8 @@ export class MqttGatewayService implements OnModuleInit, OnModuleDestroy {
         clientId: 'mes-shopfloor-' + Date.now(),
         clean: true,
         reconnectPeriod: 30000,
+        ...(this.configService.get<string>('MQTT_USERNAME') ? { username: this.configService.get<string>('MQTT_USERNAME') } : {}),
+        ...(this.configService.get<string>('MQTT_PASSWORD') ? { password: this.configService.get<string>('MQTT_PASSWORD') } : {}),
       });
 
       this.startupTimer = setTimeout(() => {
@@ -50,7 +52,7 @@ export class MqttGatewayService implements OnModuleInit, OnModuleDestroy {
           this.webshopOrderTopic,
         ]);
         for (const topic of topics) {
-          this.client.subscribe(topic, (error: Error | null) => {
+          this.client.subscribe(topic, { qos: 2 }, (error: Error | null) => {
             if (error) this.logger.error(`MQTT subscription failed for ${topic}: ${error.message}`);
           });
         }
@@ -114,13 +116,13 @@ export class MqttGatewayService implements OnModuleInit, OnModuleDestroy {
   }
 
   publishWebshopOrder(data: Record<string, unknown>): Promise<void> {
-    return this.publishJson(this.webshopOrderTopic, data);
+    return this.publishJson(this.webshopOrderTopic, data, 2);
   }
 
-  private publishJson(topic: string, data: unknown): Promise<void> {
+  private publishJson(topic: string, data: unknown, qos = 1): Promise<void> {
     if (!this.client?.connected) throw new ServiceUnavailableException('MQTT broker is not connected');
     return new Promise<void>((resolve, reject) => {
-      this.client.publish(topic, JSON.stringify(data), { qos: 1 }, (error: Error | null) => error ? reject(error) : resolve());
+      this.client.publish(topic, JSON.stringify(data), { qos }, (error: Error | null) => error ? reject(error) : resolve());
     });
   }
 

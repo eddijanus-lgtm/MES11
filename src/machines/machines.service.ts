@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { MachineEntity, MachineStatusEnum } from './machine.entity';
@@ -19,6 +19,11 @@ export class MachinesService {
       location: dto.location,
       model: dto.model,
       serial_number: dto.serial_number,
+      is_machine: dto.is_machine || false,
+      parent_machine_id: dto.parent_machine_id,
+      ip_address: dto.ip_address,
+      connection_port: dto.connection_port,
+      connection_protocol: dto.connection_protocol,
       resource_id: dto.resource_id,
       opcua_endpoint_url: dto.opcua_endpoint_url,
       opcua_node_prefix: dto.opcua_node_prefix,
@@ -29,7 +34,7 @@ export class MachinesService {
   }
 
   async findAll(): Promise<MachineEntity[]> {
-    return this.machinesRepo.find({ order: { name: 'ASC' } });
+    return this.machinesRepo.find({ order: { is_machine: 'DESC', name: 'ASC' } });
   }
 
   async findOne(id: string): Promise<MachineEntity> {
@@ -46,8 +51,31 @@ export class MachinesService {
   }
 
   async remove(id: string): Promise<void> {
+    const machine = await this.findOne(id);
+    if (machine.is_machine) {
+      const stationCount = await this.machinesRepo.count({ where: { parent_machine_id: id } });
+      if (stationCount > 0) {
+        throw new BadRequestException('Die Maschine kann erst gelöscht werden, wenn alle zugeordneten Stationen entfernt oder verschoben wurden.');
+      }
+    }
     const result = await this.machinesRepo.delete(id);
     if (result.affected === 0) throw new NotFoundException('Machine not found');
+  }
+
+  /** Creates the default root once and assigns legacy station records to it. */
+  async createBaseMachine(): Promise<MachineEntity> {
+    let base = await this.machinesRepo.findOne({ where: { is_machine: true, name: 'Basismaschine' } });
+    if (!base) {
+      base = await this.machinesRepo.save(this.machinesRepo.create({
+        name: 'Basismaschine', type: 'Produktionsmaschine', status: MachineStatusEnum.ONLINE,
+        location: 'Produktionslinie', is_machine: true, opcua_enabled: false, telemetry: {},
+      }));
+    }
+    await this.machinesRepo.createQueryBuilder().update(MachineEntity)
+      .set({ parent_machine_id: base.id })
+      .where('is_machine = false AND parent_machine_id IS NULL')
+      .execute();
+    return base;
   }
 
   async updateHeartbeat(id: string): Promise<MachineEntity> {

@@ -296,7 +296,7 @@ function MqttLivePanel({ messages, connected, t }) {
   return (
     <section className="rounded-xl border border-neutral-200 bg-white shadow-sm">
       <div className="flex flex-col gap-2 border-b border-neutral-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-        <div><p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-600">MQTT Subscribe</p><h2 className="font-semibold text-neutral-900">{t("shopfloor.mqttLive")}</h2></div>
+        <div><p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-600">{t("shopfloor.mqttSubscription")}</p><h2 className="font-semibold text-neutral-900">{t("shopfloor.mqttLive")}</h2></div>
         <span className="shopfloor-state-pill" data-tone={connected ? "good" : connected === false ? "bad" : "neutral"}>{t(connected ? "shopfloor.subscribed" : connected === false ? "shopfloor.disconnected" : "shopfloor.linkUnknown")}</span>
       </div>
       <div className="p-4">

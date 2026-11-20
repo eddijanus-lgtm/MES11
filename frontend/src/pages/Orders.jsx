@@ -6,7 +6,7 @@ import { canDeleteOrders, canManageOrders } from "../utils/roles.js";
 import { useTranslation } from "../i18n/I18nProvider.jsx";
 import PageInfo from "../components/PageInfo.jsx";
 
-const EMPTY_FORM = { id: null, name: "", priority: 1, machine_id: "", operation: "Webshop-Produkt konfigurieren", quantity: 1, completed_quantity: 0, status: "pending" };
+const EMPTY_FORM = { id: null, name: "", priority: 1, machine_id: "", operation: "Webshop-Produkt konfigurieren", quantity: 1, completed_quantity: 0, red_balls: 0, green_balls: 0, blue_balls: 0, status: "pending" };
 
 const STATUS_LABELS_RAW = { pending: "Ausstehend", in_progress: "In Arbeit", completed: "Abgeschlossen", cancelled: "Abgebrochen", on_hold: "Pausiert" };
 
@@ -49,11 +49,11 @@ export default function OrdersPage() {
 
   function openCreate() { const firstDemoStation = machines.find((machine) => machine.resource_id === 1); setError(""); setForm({ ...EMPTY_FORM, name: nextOrderName(orders), machine_id: firstDemoStation?.id || machines[0]?.id || "" }); setModalOpen(true); }
 
-  function openEdit(order) { setError(""); setForm({ id: order.id, name: order.name, priority: order.priority, machine_id: order.machine_id, operation: order.operation, quantity: order.quantity, completed_quantity: order.completed_quantity, status: order.status }); setModalOpen(true); }
+  function openEdit(order) { setError(""); setForm({ id: order.id, name: order.name, priority: order.priority, machine_id: order.machine_id, operation: order.operation, quantity: order.quantity, completed_quantity: order.completed_quantity, red_balls: order.red_balls ?? 0, green_balls: order.green_balls ?? 0, blue_balls: order.blue_balls ?? 0, status: order.status }); setModalOpen(true); }
 
   async function submit(event) {
     event.preventDefault(); setSaving(true); setError("");
-    const payload = { name: form.name.trim(), priority: Number(form.priority), machine_id: form.machine_id, operation: form.operation.trim(), quantity: Number(form.quantity) };
+    const payload = { name: form.name.trim(), priority: Number(form.priority), machine_id: form.machine_id, operation: form.operation.trim(), quantity: Number(form.quantity), red_balls: Number(form.red_balls), green_balls: Number(form.green_balls), blue_balls: Number(form.blue_balls) };
     if (form.id) { payload.status = form.status; payload.completed_quantity = Number(form.completed_quantity); }
     try {
       if (form.id) await api.patch(`/orders/${form.id}`, payload); else await api.post("/orders", payload);
@@ -77,14 +77,14 @@ export default function OrdersPage() {
     <div className="min-h-screen bg-neutral-50 p-6 space-y-6">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-primary">MES Demo Flow</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-primary">{t("orders.demoFlow")}</p>
           <h1 className="text-2xl font-bold text-neutral-900 inline-flex items-center">{t("orders.title")}<PageInfo page="orders" /></h1>
           <p className="mt-1 text-sm text-neutral-500">{t("orders.subtitle")}</p>
         </div>
         {canManage && <button onClick={openCreate} disabled={machines.length === 0} className="rounded-lg bg-brand-primary px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[var(--color-brand-primary-dark)] disabled:cursor-not-allowed disabled:opacity-50">{t("orders.newOrder")}</button>}
       </header>
 
-      {orderId ? <Link className="text-sm font-semibold text-brand-primary underline" to="/orders">{t("orders.all")}</Link> : <DemoProcessHint t={t} />}
+      {orderId && <Link className="text-sm font-semibold text-brand-primary underline" to="/orders">{t("orders.all")}</Link>}
 
       {!orderId && <div className="grid gap-3 sm:grid-cols-3">
         <OrderStat label={t("orders.all")} value={orders.length} />
@@ -153,6 +153,7 @@ function OrderCard({ order, route, carriers, machineName, resourceNames, canMana
             <MiniMetric label={t("orders.quantity")} value={`${order.completed_quantity}/${order.quantity}`} />
             <MiniMetric label={t("orders.progress")} value={`${progress(order)}%`} />
           </div>
+          <BallSummary order={order} t={t} />
           <div className="mt-4 h-2 overflow-hidden rounded-full bg-neutral-100"><div className="h-full rounded-full bg-brand-primary" style={{ width: `${progress(order)}%` }} /></div>
         </div>
         <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-4">
@@ -186,6 +187,7 @@ function OrderModal({ form, setForm, machines, carriers, saving, onSubmit, onClo
           <Field label={t("orders.productOperation")}><input required value={form.operation} onChange={(event) => setForm((current) => ({ ...current, operation: event.target.value }))} className="form-input" /></Field>
           <Field label={t("orders.priority")}><input required type="number" min="1" value={form.priority} onChange={(event) => setForm((current) => ({ ...current, priority: event.target.value }))} className="form-input" /></Field>
           <Field label={`${t("orders.quantity")} (${t("orders.maxQuantity")} ${availableCount})`}><input required type="number" min="1" max={availableCount} value={form.quantity} onChange={(event) => setForm((current) => ({ ...current, quantity: event.target.value }))} className="form-input" /></Field>
+          <div className="sm:col-span-2"><p className="mb-2 text-sm font-medium text-neutral-700">{t("orders.ballConfiguration")}</p><div className="grid gap-3 sm:grid-cols-3"><BallField color="red" label={t("orders.redBalls")} value={form.red_balls} onChange={(value) => setForm((current) => ({ ...current, red_balls: value }))} /><BallField color="green" label={t("orders.greenBalls")} value={form.green_balls} onChange={(value) => setForm((current) => ({ ...current, green_balls: value }))} /><BallField color="blue" label={t("orders.blueBalls")} value={form.blue_balls} onChange={(value) => setForm((current) => ({ ...current, blue_balls: value }))} /></div></div>
           {form.id && <Field label={t("orders.completeM")}><input required type="number" min="0" max={form.quantity} value={form.completed_quantity} onChange={(event) => setForm((current) => ({ ...current, completed_quantity: event.target.value }))} className="form-input" /></Field>}
           {form.id && <Field label={t("orders.statusBadge")}><select value={form.status} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value }))} className="form-input">{Object.entries(STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>}
           {!form.id && <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900 sm:col-span-2"><strong>{t("orders.autoCreatedHint")}</strong> {t("orders.routeHint")}, {form.quantity} {t("orders.carriersAssigned")} ({t("orders.available")}), {t("orders.estimatedCycle")} {Math.ceil(totalMs / 1000)} {t("orders.seconds")}.</div>}
@@ -196,13 +198,14 @@ function OrderModal({ form, setForm, machines, carriers, saving, onSubmit, onClo
   );
 }
 
-function DemoProcessHint({ t }) { return <section className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950"><strong>{t("orders.demoHint")}</strong></section>; }
-function RouteStep({ step, stationName }) { return <div className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-sm"><span><strong>{step.step_no}. {step.operation}</strong><span className="ml-2 text-neutral-500">OP {step.operation_no}</span></span><span className="text-xs text-neutral-500">R{step.resource_id} · {stationName || "Station"}</span></div>; }
-function CarrierChips({ carriers, t }) { return <div className="flex flex-wrap items-center gap-2"><span className="text-xs font-semibold uppercase tracking-wider text-neutral-500">{t("orders.carrierChip")}</span>{carriers.length === 0 && <span className="text-sm text-neutral-400">{t("orders.notAssigned")}</span>}{carriers.map((carrier) => <span key={carrier.id} className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-neutral-700 shadow-sm">{t("orders.carrierChip")} {carrier.carrier_number} · {carrierStatus(carrier.status)} · {t("orders.step")} {carrier.current_step_no}</span>)}</div>; }
+function RouteStep({ step, stationName, t }) { return <div className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-sm"><span><strong>{step.step_no}. {step.operation}</strong><span className="ml-2 text-neutral-500">OP {step.operation_no}</span></span><span className="text-xs text-neutral-500">R{step.resource_id} · {stationName || t("orders.selectStation")}</span></div>; }
+function CarrierChips({ carriers, t }) { return <div className="flex flex-wrap items-center gap-2"><span className="text-xs font-semibold uppercase tracking-wider text-neutral-500">{t("orders.carrierChip")}</span>{carriers.length === 0 && <span className="text-sm text-neutral-400">{t("orders.notAssigned")}</span>}{carriers.map((carrier) => <span key={carrier.id} className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-neutral-700 shadow-sm">{t("orders.carrierChip")} {carrier.carrier_number} · {carrierStatus(carrier.status, t)} · {t("orders.step")} {carrier.current_step_no}</span>)}</div>; }
 function Field({ label, children }) { return <label className="space-y-1.5 text-sm font-medium text-neutral-700"><span>{label}</span>{children}</label>; }
 function MiniMetric({ label, value }) { return <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3"><p className="text-[10px] uppercase tracking-wider text-neutral-500">{label}</p><p className="mt-1 text-lg font-bold text-neutral-900">{value}</p></div>; }
+function BallField({ color, label, value, onChange }) { const styles = { red: "border-red-200 bg-red-50 text-red-800 focus:border-red-500 focus:ring-red-200", green: "border-emerald-200 bg-emerald-50 text-emerald-800 focus:border-emerald-500 focus:ring-emerald-200", blue: "border-blue-200 bg-blue-50 text-blue-800 focus:border-blue-500 focus:ring-blue-200" }; return <label className={`grid gap-1 rounded-lg border p-3 ${styles[color]}`}><span className="text-xs font-semibold">{label}</span><input type="number" min="0" value={value} onChange={(event) => onChange(event.target.value)} className="w-full rounded border border-current/20 bg-white/70 px-2 py-1.5 text-sm outline-none focus:ring-2" /></label>; }
+function BallSummary({ order, t }) { const balls = [{ key: "red", label: t("orders.redBalls"), value: order.red_balls ?? 0, className: "border-red-200 bg-red-50 text-red-800" }, { key: "green", label: t("orders.greenBalls"), value: order.green_balls ?? 0, className: "border-emerald-200 bg-emerald-50 text-emerald-800" }, { key: "blue", label: t("orders.blueBalls"), value: order.blue_balls ?? 0, className: "border-blue-200 bg-blue-50 text-blue-800" }]; return <div className="mt-4"><p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-neutral-500">{t("orders.ballConfiguration")}</p><div className="grid grid-cols-3 gap-2">{balls.map((ball) => <div key={ball.key} className={`rounded-lg border px-3 py-2 ${ball.className}`}><p className="text-[10px] font-semibold uppercase tracking-wide">{ball.label}</p><p className="mt-1 text-lg font-bold">{ball.value}</p></div>)}</div></div>; }
 function OrderStat({ label, value, accent = "neutral" }) { const colors = accent === "green" ? "text-emerald-700" : accent === "amber" ? "text-amber-700" : "text-neutral-900"; return <div className="rounded-xl border border-neutral-200 bg-white p-4"><p className="text-xs uppercase tracking-wider text-neutral-500">{label}</p><p className={`mt-2 text-3xl font-bold ${colors}`}>{value}</p></div>; }
 function StatusBadge({ status, STATUS_LABELS }) { const color = status === "completed" ? "bg-emerald-50 text-emerald-700" : status === "in_progress" ? "bg-amber-50 text-amber-700" : status === "cancelled" ? "bg-red-50 text-red-700" : "bg-neutral-100 text-neutral-600"; return <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${color}`}>{STATUS_LABELS[status] || status}</span>; }
 function progress(order) { return order.quantity ? Math.min(100, Math.round((order.completed_quantity / order.quantity) * 100)) : 0; }
-function carrierStatus(status) { return ({ available: "verfuegbar", assigned: "zugeordnet", in_process: "in Arbeit", completed: "fertig", error: "Fehler" })[status] || status; }
+function carrierStatus(status, t) { return ({ available: t("carriers.available"), assigned: t("carriers.assigned"), in_process: t("carriers.inProcess"), completed: t("carriers.completed"), error: t("carriers.error") })[status] || status; }
 function nextOrderName(orders) { return `DEMO-ORDER-${String(orders.length + 1).padStart(3, "0")}`; }

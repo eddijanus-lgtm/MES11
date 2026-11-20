@@ -24,6 +24,10 @@ export class MachinesController {
   @Roles(UserRoleEnum.ADMIN, UserRoleEnum.OPERATOR, UserRoleEnum.VIEWER)
   findAll() { return this.machinesService.findAll(); }
 
+  @Post('base-machine')
+  @Roles(UserRoleEnum.ADMIN)
+  createBaseMachine() { return this.machinesService.createBaseMachine(); }
+
   @Get('online')
   @Roles(UserRoleEnum.ADMIN, UserRoleEnum.OPERATOR, UserRoleEnum.VIEWER)
   findOnline() { return this.machinesService.findOnline(); }

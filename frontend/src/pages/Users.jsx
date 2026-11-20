@@ -5,7 +5,7 @@ import { useTranslation } from "../i18n/I18nProvider.jsx";
 import PageInfo from "../components/PageInfo.jsx";
 
 export default function UsersPage() {
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({ username: "", password: "", role: ROLES.VIEWER });
@@ -82,7 +82,7 @@ export default function UsersPage() {
 
   function formatDate(date) {
     if (!date) return "-";
-    return new Date(date).toLocaleString("de-DE");
+    return new Date(date).toLocaleString(locale === "de" ? "de-DE" : "en-US");
   }
 
   return (

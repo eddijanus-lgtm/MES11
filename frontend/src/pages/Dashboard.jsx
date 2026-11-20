@@ -674,7 +674,7 @@ function StationCard({ station, carrier, state, t }) {
       </div>
       <div className="pointer-events-none absolute left-1/2 top-full z-30 mt-3 hidden w-72 -translate-x-1/2 rounded-xl border border-neutral-200 bg-white p-4 text-neutral-900 shadow-2xl ring-1 ring-black/5 group-hover:block">
         <div className="absolute -top-1.5 left-1/2 h-3 w-3 -translate-x-1/2 rotate-45 border-l border-t border-neutral-200 bg-white" />
-        <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-brand-primary">Shopfloor Intel</p>
+        <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-brand-primary">{t("dashboard.stationDetails")}</p>
         <h5 className="mt-1 font-semibold text-neutral-900">{station.name}</h5>
         <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
           <TooltipRow label={t("dashboard.tooltipStatus")} value={state.label} />

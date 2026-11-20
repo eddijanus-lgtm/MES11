@@ -1,237 +1,63 @@
-import { useState, useEffect } from "react";
-import StatCard from "../components/StatCard";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client.js";
 import { useAuth } from "../providers/AuthProvider.jsx";
 import { canDeleteMachines, canManageMachines } from "../utils/roles.js";
 import { useTranslation } from "../i18n/I18nProvider.jsx";
 import PageInfo from "../components/PageInfo.jsx";
 
-const productionOrder = new Map([[2, 0], [1, 1], [3, 2]]);
+const blank = (isMachine, parentId = null) => ({ id: null, name: "", type: isMachine ? "Produktionsmaschine" : "Station", status: "offline", location: "", ip_address: "", connection_port: isMachine ? "4840" : "", connection_protocol: isMachine ? "OPC UA" : "", is_machine: isMachine, parent_machine_id: parentId });
 
 export default function MachinesPage() {
-  const { t } = useTranslation();
-  const { user } = useAuth();
-  const [machines, setMachines] = useState([]);
-  const [showModal, setShowModal] = useState(false);
-  const [showImportModal, setShowImportModal] = useState(false);
-  const [deleteCandidate, setDeleteCandidate] = useState(null);
-  const [deleting, setDeleting] = useState(false);
-  const [form, setForm] = useState({ id: null, name: "", type: "CNC", status: "offline", location: "" });
-  const [search, setSearch] = useState("");
-  const [error, setError] = useState("");
-  const [importing, setImporting] = useState(false);
-  const [importResult, setImportResult] = useState(null);
-  const canManage = canManageMachines(user);
-  const canDelete = canDeleteMachines(user);
-
-  useEffect(() => {
-    api.get("/machines").then((d) => { setMachines(Array.isArray(d) ? d : []); }).catch(() => setMachines([]));
-  }, []);
-
-  function requestDelete(machine) { setError(""); setDeleteCandidate(machine); }
-
-  function handleDelete() {
+  const { t } = useTranslation(); const { user } = useAuth();
+  const [entries, setEntries] = useState([]), [expanded, setExpanded] = useState(() => new Set()), [form, setForm] = useState(null), [search, setSearch] = useState(""), [error, setError] = useState(""), [formErrors, setFormErrors] = useState({}), [deleteCandidate, setDeleteCandidate] = useState(null), [deleting, setDeleting] = useState(false);
+  const canManage = canManageMachines(user), canDelete = canDeleteMachines(user);
+  const reload = async () => { try { const data = await api.get("/machines"); setEntries(Array.isArray(data) ? data : []); } catch { setEntries([]); } };
+  useEffect(() => { reload(); }, []);
+  const groups = useMemo(() => {
+    const children = new Map(), query = search.trim().toLowerCase();
+    entries.filter((e) => !e.is_machine).forEach((s) => children.set(s.parent_machine_id, [...(children.get(s.parent_machine_id) || []), s]));
+    return entries.filter((e) => e.is_machine).filter((m) => !query || m.name.toLowerCase().includes(query) || (children.get(m.id) || []).some((s) => s.name.toLowerCase().includes(query))).map((machine) => ({ machine, stations: (children.get(machine.id) || []).filter((s) => !query || s.name.toLowerCase().includes(query)) }));
+  }, [entries, search]);
+  const label = (status) => t(`machines.status${status ? status[0].toUpperCase() + status.slice(1) : "Offline"}`);
+  const save = async (event) => {
+    event.preventDefault(); setError(""); setFormErrors({});
+    const validation = {};
+    if (!form.name?.trim()) validation.name = t("machines.nameRequired");
+    if (!form.location?.trim()) validation.location = t("machines.locationRequired");
+    if (!form.is_machine && !form.parent_machine_id) validation.parent_machine_id = t("machines.machineRequired");
+    if (Object.keys(validation).length) { setFormErrors(validation); return; }
+    const data = {
+      name: form.name, type: form.type, status: form.status, location: form.location,
+      is_machine: form.is_machine, parent_machine_id: form.is_machine ? null : form.parent_machine_id || undefined,
+      ip_address: form.ip_address || undefined,
+      connection_port: form.connection_port ? Number(form.connection_port) : undefined,
+      connection_protocol: form.connection_protocol || undefined,
+    };
+    try { form.id ? await api.patch(`/machines/${form.id}`, data) : await api.post("/machines", data); setForm(null); await reload(); } catch (e) { setFormErrors({ general: e.message }); }
+  };
+  const remove = async () => {
     if (!deleteCandidate) return;
-    setError(""); setDeleting(true);
-    api.del("/machines/" + deleteCandidate.id).then(() => {
-      setMachines((prev) => prev.filter((m) => m.id !== deleteCandidate.id));
-      setDeleteCandidate(null);
-    }).catch((requestError) => setError(requestError.message)).finally(() => setDeleting(false));
-  }
-
-  function handleEdit(m) {
-    setShowModal(true);
-    setForm({ id: m.id, name: m.name || m.machineName || "", type: m.type || "CNC", status: m.status || "offline", location: m.location || "" });
-  }
-
-  function handleSubmit(e) {
-    e.preventDefault(); setError("");
-    const endpoint = form.id ? "/machines/" + form.id : "/machines";
-    const save = form.id ? api.patch : api.post;
-    save(endpoint, { name: form.name, type: form.type || "CNC", status: form.status || "offline", location: form.location || "" }).then(() => {
-      refreshList(); setShowModal(false);
-      setForm({ id: null, name: "", type: "CNC", status: "offline", location: "" });
-    }).catch((requestError) => setError(requestError.message));
-  }
-
-  function refreshList() { api.get("/machines").then((d) => { setMachines(Array.isArray(d) ? d : []); }).catch(() => setMachines([])); }
-
-  function downloadTemplate() { window.open('/api/machines/template/csv', '_blank'); }
-
-  async function handleImport(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    setError(""); setImportResult(null); setImporting(true);
-    try {
-      const text = await file.text();
-      const fd = new FormData();
-      fd.set('file', text, file.name);
-      const res = await api.post('/machines/import/csv', fd);
-      setImportResult(res);
-    } catch (err) { setError(t("machines.importFailed") + ' ' + (err.message || t("common.unknown"))); }
-    finally { setImporting(false); }
-  }
-
-  function handleImportSubmit(e) {
-    e.preventDefault();
-    const fileInput = document.getElementById('csv-file-input');
-    if (fileInput && fileInput.files.length > 0) handleImport({ target: { files: fileInput.files } });
-  }
-
-  const onlineCount = machines.filter((m) => ["online", "running"].includes(m.status)).length;
-  const searchTerm = search.toLowerCase();
-  const visibleMachines = machines
-    .filter((machine) => (machine.name || "").toLowerCase().includes(searchTerm))
-    .sort((left, right) =>
-      (productionOrder.get(left.resource_id) ?? productionOrder.size) -
-      (productionOrder.get(right.resource_id) ?? productionOrder.size)
-    );
-
-  return (
-    <div className="min-h-screen bg-neutral-50">
-      <main className="p-6 space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold text-neutral-900 inline-flex items-center">{t("machines.title")}<PageInfo page="machines" /></h1>
-          <p className="text-sm text-neutral-500 mt-0.5">{t("machines.subtitle")}</p>
-        </div>
-
-        <div className="grid grid-cols-3 gap-4">
-          <StatCard label={t("machines.all")} value={String(machines.length)} icon="" />
-          <StatCard label={t("machines.online")} value={String(onlineCount)} icon="✅" />
-          <StatCard label={t("machines.offline")} value={String(machines.length - onlineCount)} icon="⚠️" />
-        </div>
-
-        <div className="flex justify-end gap-2">
-          {canManage && <button onClick={downloadTemplate} className="bg-white border border-neutral-200 text-neutral-700 font-medium px-4 py-2.5 rounded-lg text-sm hover:bg-neutral-50 transition-colors">{t("machines.csvTemplate")}</button>}
-          {canManage && <button onClick={() => setShowImportModal(true)} className="bg-white border border-brand-primary/30 text-brand-primary font-medium px-4 py-2.5 rounded-lg text-sm hover:bg-brand-primary/5 transition-colors">{t("machines.csvImport")}</button>}
-          {canManage && <button onClick={() => { setForm({ id: null, name: "", type: "CNC", status: "offline", location: "" }); setShowModal(true); }} className="bg-brand-primary text-white font-medium px-5 py-2.5 rounded-lg text-sm hover:bg-[var(--color-brand-primary-dark)] transition-colors">{t("machines.newStation")}</button>}
-        </div>
-
-        {error && <p role="alert" className="rounded-lg bg-status-error-bg px-4 py-3 text-sm text-status-error">{error}</p>}
-
-        <input type="text" placeholder={t("machines.search")} value={search} onChange={(e) => setSearch(e.target.value)} className="w-full bg-white border border-neutral-200 rounded-lg px-4 py-2.5 text-sm text-neutral-800 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-brand-primary/30 focus:border-brand-primary transition-all" />
-
-        {visibleMachines.length > 0 ? (
-          <div className="bg-white rounded-lg shadow-card border border-neutral-200 overflow-hidden">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-neutral-200">
-                  <th className="px-5 py-3 text-left text-xs font-semibold text-neutral-500 uppercase tracking-wider">{t("common.id")}</th>
-                  <th className="px-5 py-3 text-left text-xs font-semibold text-neutral-500 uppercase tracking-wider">{t("machines.name")}</th>
-                  <th className="px-5 py-3 text-left text-xs font-semibold text-neutral-500 uppercase tracking-wider">{t("machines.type")}</th>
-                  <th className="px-5 py-3 text-left text-xs font-semibold text-neutral-500 uppercase tracking-wider">{t("machines.status")}</th>
-                  {canManage && <th className="px-5 py-3 text-right text-xs font-semibold text-neutral-500 uppercase tracking-wider">{t("machines.actions")}</th>}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-100">
-                {visibleMachines.map((m, i) => {
-                  const statusOk = ["online", "running"].includes(m.status);
-                  return (
-                    <tr key={m.id} className="hover:bg-neutral-50 transition-colors">
-                      <td className="px-5 py-3.5 text-xs font-mono text-neutral-500">{(m.id||"").substring(0, 8)}</td>
-                      <td className="px-5 py-3.5">
-                        <span className="inline-flex items-center gap-2 text-sm text-neutral-800">
-                          <span className={`w-2 h-2 rounded-full ${statusOk ? "bg-status-success" : "bg-status-error"}`} />
-                          {m.name || m.machineName || "-"}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3.5 text-sm text-neutral-600">{m.type || "CNC"}</td>
-                      <td className="px-5 py-3.5">
-                        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium ${statusOk ? "bg-status-bg-success text-status-success" : "bg-status-bg-error text-status-error"}`}>
-                          {m.status ? m.status.charAt(0).toUpperCase() + m.status.slice(1) : "-"}
-                        </span>
-                      </td>
-                      {canManage && <td className="px-5 py-3.5 text-right">
-                        <div className="inline-flex items-center gap-1.5">
-                          <button onClick={() => handleEdit(m)} className="px-3 py-1.5 text-xs font-medium text-neutral-700 bg-neutral-100 rounded-md hover:bg-neutral-200 transition-colors">{t("machines.edit")}</button>
-                          {canDelete && <button onClick={() => requestDelete(m)} className="px-3 py-1.5 text-xs font-medium text-white bg-status-error rounded-md hover:bg-[var(--color-status-error-dark)] transition-colors">{t("machines.delete")}</button>}
-                        </div>
-                      </td>}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <p className="text-center text-neutral-400 py-12 text-sm">{t("common.noEntries")}</p>
-        )}
-
-        {showModal && (
-          <div onClick={() => setShowModal(false)} className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4">
-            <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.1)] w-full max-w-md p-6">
-              <h2 className="text-lg font-bold text-neutral-900 mb-4">{form.id ? t("machines.stationEdit") : t("machines.newStationTitle")}</h2>
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div><label className="block text-sm font-medium text-neutral-700 mb-1.5">{t("machines.name")}</label><input type="text" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} required className="w-full border border-neutral-200 rounded-lg px-3 py-2 text-sm text-neutral-800 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-brand-primary/30 focus:border-brand-primary" /></div>
-                <div><label className="block text-sm font-medium text-neutral-700 mb-1.5">{t("machines.type")}</label><select value={form.type} onChange={(e) => setForm((f) => ({ ...f, type: e.target.value }))} className="w-full border border-neutral-200 rounded-lg px-3 py-2 text-sm text-neutral-800 focus:outline-none focus:ring-2 focus:ring-brand-primary/30"><option value="CNC">CNC</option><option value="PLC">PLC</option><option value="Roboter">Roboter</option></select></div>
-                <div><label className="block text-sm font-medium text-neutral-700 mb-1.5">{t("machines.status")}</label><select value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))} className="w-full border border-neutral-200 rounded-lg px-3 py-2 text-sm text-neutral-800 focus:outline-none focus:ring-2 focus:ring-brand-primary/30"><option value="offline">{t("machines.statusOffline")}</option><option value="online">{t("machines.statusOnline")}</option><option value="idle">{t("machines.statusIdle")}</option><option value="maintenance">{t("machines.statusMaintenance")}</option><option value="error">{t("machines.statusError")}</option></select></div>
-                <div><label className="block text-sm font-medium text-neutral-700 mb-1.5">{t("machines.location")}</label><input type="text" value={form.location} onChange={(e) => setForm((f) => ({ ...f, location: e.target.value }))} className="w-full border border-neutral-200 rounded-lg px-3 py-2 text-sm text-neutral-800 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-brand-primary/30" /></div>
-                <div className="flex gap-2 justify-end pt-2">
-                  <button type="button" onClick={() => { setShowModal(false); setForm({ id: null, name: "", type: "CNC", status: "offline", location: "" }); }} className="px-4 py-2 text-sm font-medium text-neutral-600 bg-neutral-100 rounded-lg hover:bg-neutral-200 transition-colors">{t("machines.cancel")}</button>
-                  <button type="submit" className="px-4 py-2 text-sm font-medium text-white bg-brand-primary rounded-lg hover:bg-[var(--color-brand-primary-dark)] transition-colors">{t("machines.save")}</button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
-
-        {deleteCandidate && (
-          <div onClick={() => !deleting && setDeleteCandidate(null)} className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
-            <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-xl bg-white p-6 shadow-[0_20px_50px_rgba(0,0,0,0.12)]">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-status-error">{t("machines.deleteTitle")}</p>
-              <h2 className="mt-2 text-lg font-bold text-neutral-900">{deleteCandidate.name || t("machines.deleteTitle")} {t("machines.deleteConfirm")}</h2>
-              <p className="mt-2 text-sm text-neutral-500">{t("machines.deleteText")}</p>
-              <div className="mt-5 rounded-lg border border-neutral-200 bg-neutral-50 p-3 text-sm">
-                <p><span className="font-medium text-neutral-600">{t("machines.type")}:</span> {deleteCandidate.type || "-"}</p>
-                <p><span className="font-medium text-neutral-600">{t("machines.status")}:</span> {deleteCandidate.status || "-"}</p>
-                <p><span className="font-medium text-neutral-600">{t("machines.location")}:</span> {deleteCandidate.location || "-"}</p>
-              </div>
-              <div className="mt-6 flex justify-end gap-2">
-                <button type="button" disabled={deleting} onClick={() => setDeleteCandidate(null)} className="rounded-lg bg-neutral-100 px-4 py-2 text-sm font-medium text-neutral-600 transition-colors hover:bg-neutral-200 disabled:opacity-50">{t("machines.cancel")}</button>
-                <button type="button" disabled={deleting} onClick={handleDelete} className="rounded-lg bg-status-error px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[var(--color-status-error-dark)] disabled:opacity-50">{deleting ? t("machines.deleting") : t("machines.deleteBtn")}</button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {showImportModal && (
-          <div onClick={() => { setShowImportModal(false); setImportResult(null); setError(""); }} className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4">
-            <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.1)] w-full max-w-lg p-6">
-              <h2 className="text-lg font-bold text-neutral-900 mb-4">{t("machines.importTitle")}</h2>
-              {!importResult && (
-                <form onSubmit={handleImportSubmit} className="space-y-4">
-                  <div className="p-4 bg-brand-primary/5 border border-brand-primary/20 rounded-lg text-sm text-brand-primary">
-                    <p className="font-semibold mb-1">{t("machines.importHints")}</p>
-                    <ul className="list-disc list-inside space-y-1 text-xs">
-                      <li>{t("machines.importHint1")}</li>
-                      <li>{t("machines.importHint2")}</li>
-                      <li>{t("machines.importHint3")}</li>
-                    </ul>
-                  </div>
-                  <div className="flex gap-2"><button type="button" onClick={downloadTemplate} className="px-4 py-2 text-sm font-medium text-neutral-600 bg-neutral-100 rounded-lg hover:bg-neutral-200 transition-colors">{t("machines.csvTemplate")}</button></div>
-                  <div><label className="block text-sm font-medium text-neutral-700 mb-1.5">{t("machines.importFile")}</label><input id="csv-file-input" type="file" accept=".csv" onChange={(e) => { setError(""); setImportResult(null); }} className="w-full border border-neutral-200 rounded-lg px-3 py-2 text-sm text-neutral-800 focus:outline-none focus:ring-2 focus:ring-brand-primary/30" /></div>
-                  <div className="flex gap-2 justify-end pt-2">
-                    <button type="button" onClick={() => { setShowImportModal(false); setImportResult(null); setError(""); }} className="px-4 py-2 text-sm font-medium text-neutral-600 bg-neutral-100 rounded-lg hover:bg-neutral-200 transition-colors">{t("machines.cancel")}</button>
-                    <button type="submit" disabled={importing} className="px-4 py-2 text-sm font-medium text-white bg-brand-primary rounded-lg hover:bg-[var(--color-brand-primary-dark)] transition-colors disabled:opacity-50">{importing ? t("common.loading") : t("machines.importBtn")}</button>
-                  </div>
-                </form>
-              )}
-              {importResult && (
-                <div className="space-y-3">
-                  <div className="p-4 bg-status-bg-success text-status-success rounded-lg text-sm font-medium">{importResult.imported} {t("machines.importSuccess")}</div>
-                  {importResult.errors && importResult.errors.length > 0 && (
-                    <div className="space-y-2">
-                      <p className="text-sm font-semibold text-neutral-700">{importResult.errors.length} {t("machines.importErrors")}</p>
-                      {importResult.errors.map((err, i) => (<div key={i} className="p-3 bg-status-error-bg border border-status-error/20 rounded-lg text-sm text-status-error">{t("machines.importRow")} {err.row}: {err.message}</div>))}
-                    </div>
-                  )}
-                  <div className="flex justify-end pt-2"><button onClick={() => { setShowImportModal(false); setImportResult(null); refreshList(); }} className="px-4 py-2 text-sm font-medium text-white bg-brand-primary rounded-lg hover:bg-[var(--color-brand-primary-dark)] transition-colors">{t("machines.close")}</button></div>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </main>
-    </div>
-  );
+    setDeleting(true); setError("");
+    try { await api.del(`/machines/${deleteCandidate.id}`); setDeleteCandidate(null); await reload(); }
+    catch (e) { setError(e.message); }
+    finally { setDeleting(false); }
+  };
+  return <div className="min-h-screen bg-neutral-50"><main className="p-6 space-y-6">
+    <header className="flex flex-wrap items-end justify-between gap-4"><div><h1 className="inline-flex text-2xl font-bold text-neutral-900">{t("machines.title")}<PageInfo page="machines" /></h1><p className="mt-0.5 text-sm text-neutral-500">{t("machines.subtitle")}</p></div>{canManage && <button onClick={() => setForm(blank(true))} className="rounded-lg bg-brand-primary px-5 py-2.5 text-sm font-medium text-white">{t("machines.newMachine")}</button>}</header>
+    {error && <p role="alert" className="rounded-lg bg-status-error-bg px-4 py-3 text-sm text-status-error">{error}</p>}
+    <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("machines.search")} className="w-full rounded-lg border border-neutral-200 bg-white px-4 py-2.5 text-sm" />
+    <section className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-card"><div className="grid grid-cols-[1fr_auto] gap-3 border-b border-neutral-200 bg-neutral-50 px-5 py-3 text-xs font-semibold uppercase tracking-wider text-neutral-500"><span>{t("machines.machineTree")}</span><span>{t("machines.actions")}</span></div>
+      {groups.map(({ machine, stations }) => <Branch key={machine.id} machine={machine} stations={stations} expanded={expanded.has(machine.id)} toggle={() => setExpanded((old) => { const next = new Set(old); next.has(machine.id) ? next.delete(machine.id) : next.add(machine.id); return next; })} edit={setForm} add={() => setForm(blank(false, machine.id))} remove={setDeleteCandidate} canManage={canManage} canDelete={canDelete} label={label} t={t} />)}
+      {!groups.length && <p className="p-10 text-center text-sm text-neutral-400">{t("common.noEntries")}</p>}</section>
+    {form && <Dialog form={form} machines={entries.filter((e) => e.is_machine)} stations={entries.filter((e) => !e.is_machine && e.parent_machine_id === form.id)} setForm={setForm} errors={formErrors} save={save} saveStation={async (station) => { await api.patch(`/machines/${station.id}`, station); await reload(); }} createStation={() => { setFormErrors({}); setForm(blank(false, form.id)); }} removeStation={setDeleteCandidate} close={() => { setForm(null); setFormErrors({}); }} label={label} t={t} />}
+    {deleteCandidate && <DeleteDialog entry={deleteCandidate} deleting={deleting} close={() => !deleting && setDeleteCandidate(null)} confirm={remove} t={t} />}
+  </main></div>;
 }
+function Branch({ machine, stations, expanded, toggle, edit, add, remove, canManage, canDelete, label, t }) { return <div className="border-b border-neutral-100 last:border-0"><div className="grid grid-cols-[1fr_auto] items-center gap-3 px-5 py-4 hover:bg-neutral-50"><div><div className="flex items-center gap-2"><span className="size-2 rounded-full bg-brand-primary" /><strong className="text-sm text-neutral-900">{machine.name}</strong><Status value={machine.status} label={label} /></div><p className="ml-4 mt-1 text-xs text-neutral-500">{machine.type || t("machines.machine")} · {machine.ip_address || t("machines.noConnection")}{machine.connection_port ? `:${machine.connection_port}` : ""} · {stations.length} {t("machines.stations")}</p></div><div className="flex items-center gap-3"><Actions entry={machine} edit={edit} remove={remove} add={add} canManage={canManage} canDelete={canDelete} deleteLocked={stations.length > 0} label={label} t={t} /><button aria-label={expanded ? t("machines.collapse") : t("machines.expand")} onClick={toggle} className="inline-flex size-8 items-center justify-center rounded-full border border-neutral-300 text-lg leading-none text-neutral-600 hover:border-neutral-400 hover:text-neutral-900">{expanded ? "⌃" : "⌄"}</button></div></div>
+    {expanded && <div className="ml-9 border-l border-neutral-200">{stations.length ? stations.map((station) => <div key={station.id} className="grid grid-cols-[1fr_auto] items-center gap-3 px-5 py-3 pl-7 hover:bg-neutral-50"><div><div className="flex items-center gap-2"><span className="font-mono text-neutral-300">└─</span><span className="text-sm font-medium text-neutral-800">{station.name}</span><Status value={station.status} label={label} /></div><p className="ml-7 mt-1 text-xs text-neutral-500">{station.type || t("machines.station")} · {station.location || "–"}</p></div><Actions entry={station} edit={edit} remove={remove} canManage={canManage} canDelete={canDelete} t={t} /></div>) : <p className="px-7 py-3 text-sm text-neutral-400">{t("machines.noStations")}</p>}</div>}</div>; }
+function Status({ value, label }) { return <span className={`rounded-full px-2 py-0.5 text-xs ${["online", "idle"].includes(value) ? "bg-status-bg-success text-status-success" : "bg-status-bg-error text-status-error"}`}>{label(value)}</span>; }
+function Actions({ entry, edit, remove, canManage, canDelete, deleteLocked = false, t }) { return <div className="flex items-center gap-2">{canManage && <button onClick={() => edit(entry)} className="rounded bg-neutral-100 px-3 py-1.5 text-xs font-medium text-neutral-700">{t("machines.edit")}</button>}{canDelete && <button onClick={() => remove(entry)} disabled={deleteLocked} title={deleteLocked ? t("machines.deleteBlocked") : undefined} className="text-xs text-status-error disabled:cursor-not-allowed disabled:opacity-40">{t("common.delete")}</button>}</div>; }
+function Dialog({ form, machines, stations, setForm, errors, save, saveStation, createStation, removeStation, close, label, t }) { const update = (key, value) => setForm((old) => ({ ...old, [key]: value })); const title = form.id ? (form.is_machine ? t("machines.editMachine") : t("machines.stationEdit")) : (form.is_machine ? t("machines.newMachine") : t("machines.newStationTitle")); return <div onClick={close} className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"><div onClick={(e) => e.stopPropagation()} className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-2xl"><h2 className="mb-5 text-lg font-bold">{title}</h2>{errors.general && <p className="mb-4 rounded-lg bg-status-error-bg p-3 text-sm text-status-error">{errors.general}</p>}<form onSubmit={save} noValidate className="grid gap-4 sm:grid-cols-2"><Field label={t("machines.name")} error={errors.name}><input value={form.name} onChange={(e) => update("name", e.target.value)} /></Field><Field label={t("machines.type")}><input value={form.type || ""} onChange={(e) => update("type", e.target.value)} /></Field>{!form.is_machine && <Field label={t("machines.machine")} error={errors.parent_machine_id}><select value={form.parent_machine_id || ""} onChange={(e) => update("parent_machine_id", e.target.value)}><option value="">{t("machines.selectMachine")}</option>{machines.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></Field>}<Field label={t("machines.status")}><select value={form.status} onChange={(e) => update("status", e.target.value)}>{["online", "offline", "idle", "maintenance", "error"].map((s) => <option key={s} value={s}>{label(s)}</option>)}</select></Field><Field label={t("machines.location")} error={errors.location}><input value={form.location || ""} onChange={(e) => update("location", e.target.value)} /></Field>{form.is_machine && <><Field label={t("machines.ipAddress")}><input placeholder="192.168.1.10" value={form.ip_address || ""} onChange={(e) => update("ip_address", e.target.value)} /></Field><Field label={t("machines.protocol")}><select value={form.connection_protocol || ""} onChange={(e) => update("connection_protocol", e.target.value)}>{["OPC UA", "Modbus TCP", "MQTT", "HTTP"].map((p) => <option key={p}>{p}</option>)}</select></Field><Field label={t("machines.port")}><input type="number" min="1" max="65535" value={form.connection_port || ""} onChange={(e) => update("connection_port", e.target.value)} /></Field></>}<div className="col-span-full flex justify-end gap-2 border-t border-neutral-100 pt-4"><button type="button" onClick={close} className="rounded-lg bg-neutral-100 px-4 py-2 text-sm">{t("common.cancel")}</button><button className="rounded-lg bg-brand-primary px-4 py-2 text-sm text-white">{t("common.save")}</button></div></form>{form.is_machine && <section className="mt-6 border-t border-neutral-200 pt-5"><div className="mb-3 flex items-center justify-between"><h3 className="font-semibold text-neutral-900">{t("machines.stations")}</h3><button onClick={createStation} className="rounded-lg border border-brand-primary/30 px-3 py-2 text-sm font-medium text-brand-primary">{t("machines.newStation")}</button></div><div className="space-y-2">{stations.map((station) => <StationSettings key={station.id} station={station} label={label} save={saveStation} remove={removeStation} t={t} />)}{!stations.length && <p className="text-sm text-neutral-400">{t("machines.noStations")}</p>}</div></section>}</div></div>; }
+function StationSettings({ station, label, save, remove, t }) { const [open, setOpen] = useState(false), [draft, setDraft] = useState(station), [saving, setSaving] = useState(false); const update = (key, value) => setDraft((old) => ({ ...old, [key]: value })); const submit = async () => { setSaving(true); try { await save({ id: station.id, name: draft.name, type: draft.type, status: draft.status, location: draft.location, is_machine: false, parent_machine_id: draft.parent_machine_id }); setOpen(false); } finally { setSaving(false); } }; return <div className="rounded-lg border border-neutral-200"><div className="flex items-center justify-between gap-3 p-3"><div><strong className="text-sm">{station.name}</strong><span className="ml-2 text-xs text-neutral-500">{station.type || t("machines.station")}</span></div><div className="flex items-center gap-2"><button onClick={() => remove(station)} className="text-xs text-status-error">{t("common.delete")}</button><button aria-label={open ? t("machines.collapse") : t("machines.expand")} onClick={() => setOpen((value) => !value)} className="inline-flex size-8 items-center justify-center rounded-full border border-neutral-300 text-lg leading-none text-neutral-600">{open ? "⌃" : "⌄"}</button></div></div>{open && <div className="grid gap-3 border-t border-neutral-100 p-3 sm:grid-cols-2"><Field label={t("machines.name")}><input value={draft.name} onChange={(e) => update("name", e.target.value)} /></Field><Field label={t("machines.type")}><input value={draft.type || ""} onChange={(e) => update("type", e.target.value)} /></Field><Field label={t("machines.status")}><select value={draft.status} onChange={(e) => update("status", e.target.value)}>{["online", "offline", "idle", "maintenance", "error"].map((s) => <option key={s} value={s}>{label(s)}</option>)}</select></Field><Field label={t("machines.location")}><input value={draft.location || ""} onChange={(e) => update("location", e.target.value)} /></Field><div className="sm:col-span-2 flex justify-end"><button onClick={submit} disabled={saving} className="rounded-lg bg-brand-primary px-3 py-2 text-sm text-white">{saving ? t("common.saving") : t("common.save")}</button></div></div>}</div>; }
+function Field({ label, error, children }) { return <label className="grid gap-1 text-sm font-medium text-neutral-700"><span>{label}</span><span className={`[&>input]:w-full [&>input]:rounded-lg [&>input]:border [&>input]:px-3 [&>input]:py-2 [&>select]:w-full [&>select]:rounded-lg [&>select]:border [&>select]:px-3 [&>select]:py-2 ${error ? "[&>input]:border-status-error [&>select]:border-status-error" : "[&>input]:border-neutral-200 [&>select]:border-neutral-200"}`}>{children}</span>{error && <span className="text-xs font-normal text-status-error">{error}</span>}</label>; }
+function DeleteDialog({ entry, deleting, close, confirm, t }) { const title = entry.is_machine ? t("machines.deleteMachineTitle") : t("machines.deleteTitle"); const text = entry.is_machine ? t("machines.deleteMachineText") : t("machines.deleteText"); return <div onClick={close} className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"><section onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="delete-machine-title" className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl"><p className="text-xs font-semibold uppercase tracking-[0.18em] text-status-error">{title}</p><h2 id="delete-machine-title" className="mt-2 text-lg font-bold text-neutral-900">{entry.name} {t("machines.deleteConfirm")}</h2><p className="mt-2 text-sm text-neutral-500">{text}</p><div className="mt-5 rounded-lg border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-600"><p>{t("machines.type")}: {entry.type || "–"}</p><p>{t("machines.location")}: {entry.location || "–"}</p></div><div className="mt-6 flex justify-end gap-2"><button onClick={close} disabled={deleting} className="rounded-lg bg-neutral-100 px-4 py-2 text-sm">{t("common.cancel")}</button><button onClick={confirm} disabled={deleting} className="rounded-lg bg-status-error px-4 py-2 text-sm font-medium text-white disabled:opacity-60">{deleting ? t("machines.deleting") : t("machines.deleteBtn")}</button></div></section></div>; }

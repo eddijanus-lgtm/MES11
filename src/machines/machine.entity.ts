@@ -31,6 +31,22 @@ export class MachineEntity {
   @Column({ nullable: true })
   serial_number?: string;
 
+  /** True for a production machine; false for a station belonging to a machine. */
+  @Column({ default: false })
+  is_machine: boolean;
+
+  @Column({ type: 'uuid', nullable: true })
+  parent_machine_id?: string;
+
+  @Column({ nullable: true })
+  ip_address?: string;
+
+  @Column({ type: 'int', nullable: true })
+  connection_port?: number;
+
+  @Column({ nullable: true })
+  connection_protocol?: string;
+
   @Column({ type: 'int', nullable: true, unique: true })
   resource_id?: number;
 

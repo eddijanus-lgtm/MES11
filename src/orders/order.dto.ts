@@ -22,6 +22,21 @@ export class CreateOrderDto {
   quantity: number;
 
   @IsOptional()
+  @Min(0)
+  @IsInt()
+  red_balls?: number;
+
+  @IsOptional()
+  @Min(0)
+  @IsInt()
+  green_balls?: number;
+
+  @IsOptional()
+  @Min(0)
+  @IsInt()
+  blue_balls?: number;
+
+  @IsOptional()
   @Type(() => Date)
   @IsDate()
   start_time?: Date;
@@ -56,6 +71,21 @@ export class UpdateOrderDto {
   @Min(1)
   @IsInt()
   quantity?: number;
+
+  @IsOptional()
+  @Min(0)
+  @IsInt()
+  red_balls?: number;
+
+  @IsOptional()
+  @Min(0)
+  @IsInt()
+  green_balls?: number;
+
+  @IsOptional()
+  @Min(0)
+  @IsInt()
+  blue_balls?: number;
 
   @IsOptional()
   @IsEnum(['pending', 'in_progress', 'completed', 'cancelled', 'on_hold'])

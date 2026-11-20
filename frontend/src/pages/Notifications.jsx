@@ -19,7 +19,7 @@ function parseChannelConfig(config) {
 }
 
 export default function NotificationsPage() {
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const { user, token } = useAuth();
   const { addToast } = useToasts();
   const [params, setParams] = useSearchParams();
@@ -184,7 +184,7 @@ export default function NotificationsPage() {
           {history.length === 0 ? <p className="text-gray-400">{t("notifications.noHistory")}</p> : history.map(h => (
             <div key={h.id} className="bg-white p-3 shadow-sm border rounded-lg flex items-start gap-3">
               <span style={{ background: severityColors[h.severity || "warning"], color: "#fff", padding: "2px 8px", borderRadius: "4px", fontSize: "12px" }}>{h.severity}</span>
-              <div className="flex-1 min-w-0"><div className="font-medium truncate">{h.message}</div><div className="text-xs text-gray-500">{h.machine_id ? `Machine: ${h.machine_id} • ` : ""}{h.delivered ? "✓" : "✗"}<span>{new Date(h.created_at).toLocaleString("de-DE")}</span></div></div>
+              <div className="flex-1 min-w-0"><div className="font-medium truncate">{h.message}</div><div className="text-xs text-gray-500">{h.machine_id ? `${t("notifications.machineLabel")}: ${h.machine_id} • ` : ""}{h.delivered ? "✓" : "✗"}<span>{new Date(h.created_at).toLocaleString(locale === "de" ? "de-DE" : "en-US")}</span></div></div>
             </div>
           ))}
         </div>

@@ -103,6 +103,9 @@ export class RoutingService {
         operation: 'Webshop-Produkt konfigurieren',
         quantity: 1,
         completed_quantity: 0,
+        red_balls: payload.uiKugelRot,
+        green_balls: payload.uiKugelGruen,
+        blue_balls: payload.uiKugelBlau,
         status: 'in_progress',
         start_time: new Date(),
       }));

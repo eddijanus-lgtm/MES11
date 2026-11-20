@@ -4,7 +4,7 @@ import { useTranslation } from "../i18n/I18nProvider.jsx";
 import PageInfo from "../components/PageInfo.jsx";
 
 export default function TracesPage() {
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const [traces, setTraces] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -52,7 +52,7 @@ export default function TracesPage() {
     return String(val).slice(0, 100);
   }
 
-  function formatDate(d) { if (!d) return "-"; return new Date(d).toLocaleString("de-DE"); }
+  function formatDate(d) { if (!d) return "-"; return new Date(d).toLocaleString(locale === "de" ? "de-DE" : "en-US"); }
 
   const categories = ["all", "process_data", "quality", "material", "energy", "op_input"];
 

@@ -26,6 +26,15 @@ export class OrderEntity {
   @Column({ type: 'int', default: 0 })
   completed_quantity: number;
 
+  @Column({ type: 'int', default: 0 })
+  red_balls: number;
+
+  @Column({ type: 'int', default: 0 })
+  green_balls: number;
+
+  @Column({ type: 'int', default: 0 })
+  blue_balls: number;
+
   @Column({ type: 'timestamp', nullable: true })
   start_time?: Date;
 

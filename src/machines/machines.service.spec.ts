@@ -38,7 +38,7 @@ describe('MachinesService', () => {
     machinesRepo.find.mockResolvedValue([]);
 
     await service.findAll();
-    expect(machinesRepo.find).toHaveBeenCalledWith({ order: { name: 'ASC' } });
+    expect(machinesRepo.find).toHaveBeenCalledWith({ order: { is_machine: 'DESC', name: 'ASC' } });
   });
 
   it('throws when machine is missing', async () => {

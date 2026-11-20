@@ -7,7 +7,7 @@ import { hasRole, ROLES } from "../utils/roles.js";
 import PageInfo from "../components/PageInfo.jsx";
 
 export default function AlarmsPage() {
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const [alarms, setAlarms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all");
@@ -96,7 +96,7 @@ export default function AlarmsPage() {
     } catch { toast.addToast({ type: "error", message: t("alarms.toastExportFailed") }); }
   }
 
-  function formatDate(d) { if (!d) return "-"; return new Date(d).toLocaleString("de-DE"); }
+  function formatDate(d) { if (!d) return "-"; return new Date(d).toLocaleString(locale === "de" ? "de-DE" : "en-US"); }
 
   const canBulkAck = canAcknowledge && alarms.some((a) => selected[a.id] && !a.acknowledged);
   const canBulkDelete = hasRole(user, ROLES.ADMIN) && selCount > 0;
