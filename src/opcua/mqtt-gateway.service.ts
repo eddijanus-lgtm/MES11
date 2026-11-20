@@ -18,6 +18,7 @@ export class MqttGatewayService implements OnModuleInit, OnModuleDestroy {
   private reconnectAttempts = 0;
   private readonly logger = new Logger(MqttGatewayService.name);
   private startupTimer?: NodeJS.Timeout;
+  private subscriptionWatchdog?: NodeJS.Timeout;
   private readonly telemetryCallbacks = new Set<(event: ShopfloorTelemetryEvent) => void>();
   private readonly recentTelemetry: Array<{ topic: string; payload: Record<string, unknown>; timestamp: string }> = [];
 
@@ -33,6 +34,7 @@ export class MqttGatewayService implements OnModuleInit, OnModuleDestroy {
       this.client = mqtt.connect(brokerUrl, {
         clientId: 'mes-shopfloor-' + Date.now(),
         clean: true,
+        protocolVersion: 5,
         reconnectPeriod: 30000,
         ...(this.configService.get<string>('MQTT_USERNAME') ? { username: this.configService.get<string>('MQTT_USERNAME') } : {}),
         ...(this.configService.get<string>('MQTT_PASSWORD') ? { password: this.configService.get<string>('MQTT_PASSWORD') } : {}),
@@ -47,15 +49,7 @@ export class MqttGatewayService implements OnModuleInit, OnModuleDestroy {
       this.client.on('connect', () => {
         this.reconnectAttempts = 0;
         this.logger.log('Connected to MQTT broker at ' + brokerUrl);
-        const topics = new Set([
-          ...SUBSCRIPTION_TOPICS,
-          this.webshopOrderTopic,
-        ]);
-        for (const topic of topics) {
-          this.client.subscribe(topic, { qos: 2 }, (error: Error | null) => {
-            if (error) this.logger.error(`MQTT subscription failed for ${topic}: ${error.message}`);
-          });
-        }
+        this.subscribeToTopics();
       });
       this.client.on('error', (error: Error) => this.logger.error('MQTT client error: ' + error.message));
       this.client.on('offline', () => this.logger.warn('MQTT client is offline'));
@@ -64,6 +58,14 @@ export class MqttGatewayService implements OnModuleInit, OnModuleDestroy {
         this.logger.log(`MQTT reconnect attempt ${this.reconnectAttempts}`);
       });
       this.client.on('close', () => this.logger.warn('MQTT connection closed'));
+
+      // Some brokers can keep a TCP session alive while losing a subscription.
+      // MQTT v5 retain-handling=1 prevents this recovery check from replaying
+      // retained webshop orders for an unchanged subscription.
+      this.subscriptionWatchdog = setInterval(() => {
+        if (this.client?.connected) this.subscribeToTopics(true);
+      }, 60_000);
+      this.subscriptionWatchdog.unref();
 
       this.client.on('message', (topic: string, payload: Buffer) => {
         try {
@@ -91,6 +93,7 @@ export class MqttGatewayService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleDestroy() {
     if (this.startupTimer) clearTimeout(this.startupTimer);
+    if (this.subscriptionWatchdog) clearInterval(this.subscriptionWatchdog);
     if (!this.client) return;
     await new Promise<void>((resolve) => this.client.end(false, {}, () => resolve()));
   }
@@ -149,6 +152,15 @@ export class MqttGatewayService implements OnModuleInit, OnModuleDestroy {
     };
     for (const callback of this.telemetryCallbacks) {
       try { callback(event); } catch (error) { this.logger.error('MQTT telemetry callback failed', error); }
+    }
+  }
+
+  private subscribeToTopics(isRecovery = false) {
+    const topics = new Set([...SUBSCRIPTION_TOPICS, this.webshopOrderTopic]);
+    for (const topic of topics) {
+      this.client.subscribe(topic, { qos: 2, rh: isRecovery ? 1 : 0 }, (error: Error | null) => {
+        if (error) this.logger.error(`MQTT subscription failed for ${topic}: ${error.message}`);
+      });
     }
   }
 }
